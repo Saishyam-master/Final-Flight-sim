@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export function setupPhysics(aircraft, onTakeoff) {
+export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
   aircraft.velocity = new THREE.Vector3();
   aircraft.rotationSpeed = { pitch: 0, yaw: 0, roll: 0 };
   aircraft.throttle = 0;
@@ -28,17 +28,12 @@ export function setupPhysics(aircraft, onTakeoff) {
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(aircraft.quaternion).normalize();
     const speed = aircraft.velocity.length();
 
-    // Thrust only if throttle > 0
     const thrustForce = forward.clone().multiplyScalar(aircraft.throttle * MAX_THRUST);
-
-    // Drag
     const dragForce = aircraft.velocity.clone().multiplyScalar(-0.5 * AIR_DENSITY * speed * DRAG_COEFF * WING_AREA / MASS);
 
-    // Lift
     const liftMagnitude = 0.5 * AIR_DENSITY * speed * speed * WING_AREA * LIFT_COEFF;
     const liftForce = up.clone().multiplyScalar((aircraft.position.y > 5 ? liftMagnitude : 0) / MASS);
 
-    // Gravity
     const gravityForce = new THREE.Vector3(0, -GRAVITY, 0);
 
     const netForce = new THREE.Vector3();
@@ -50,24 +45,20 @@ export function setupPhysics(aircraft, onTakeoff) {
     const acceleration = netForce;
     aircraft.velocity.add(acceleration.multiplyScalar(deltaTime));
 
-    // Cap speed
     if (aircraft.velocity.length() > MAX_SPEED) {
       aircraft.velocity.setLength(MAX_SPEED);
     }
 
-    // Ground lock before takeoff
     if (!aircraft.airborne) {
       aircraft.velocity.y = 0;
       aircraft.position.y = GROUND_LEVEL;
     }
 
-    // Takeoff
     if (!aircraft.airborne && aircraft.velocity.dot(forward) > TAKEOFF_SPEED) {
       aircraft.airborne = true;
       if (onTakeoff) onTakeoff();
     }
 
-    // Apply rotation
     const pitchRate = aircraft.rotationSpeed.pitch * deltaTime;
     const rollRate = aircraft.rotationSpeed.roll * deltaTime;
     const yawRate = aircraft.rotationSpeed.yaw * deltaTime;
@@ -78,14 +69,25 @@ export function setupPhysics(aircraft, onTakeoff) {
 
     aircraft.quaternion.multiply(qYaw).multiply(qPitch).multiply(qRoll).normalize();
 
-    // Position update
     aircraft.position.addScaledVector(aircraft.velocity, deltaTime);
 
-    // Crash check
-    if (aircraft.position.y < 0.5) {
-      aircraft.crashed = true;
-      aircraft.velocity.set(0, 0, 0);
-      console.log("💥 Aircraft crashed!");
+    // Terrain or water collision detection
+    const ray = new THREE.Raycaster(
+      aircraft.position.clone().add(new THREE.Vector3(0, 100, 0)),
+      new THREE.Vector3(0, -1, 0),
+      0,
+      200
+    );
+    const intersects = ray.intersectObject(terrain, true).concat(ray.intersectObject(ocean, true));
+    if (intersects.length > 0) {
+      const contactY = intersects[0].point.y;
+      const distToGround = aircraft.position.y - contactY;
+
+      if (distToGround < 2.0) {
+        aircraft.crashed = true;
+        aircraft.velocity.set(0, 0, 0);
+        console.log("\uD83D\uDCA5 Aircraft crashed into terrain or water!");
+      }
     }
   };
 }
