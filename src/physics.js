@@ -1,6 +1,10 @@
 // physics.js
 import * as THREE from 'three';
 
+const TURN_COORDINATION = 0.3; // How quickly velocity aligns with orientation
+const BANK_ANGLE_FACTOR = 0.02; // How much to bank during turns
+const MIN_TURN_SPEED = 10; // Minimum speed for effective turning
+
 export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
   aircraft.velocity = new THREE.Vector3(0, 0, 0);
   aircraft.rotationSpeed = { pitch: 0, yaw: 0, roll: 0 };
@@ -9,7 +13,7 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
   aircraft.crashed = false;
 
   // constants
-  const GROUND_LEVEL = 10;
+  const GROUND_LEVEL = 11;
   const TAKEOFF_SPEED = 30;
   const MAX_THRUST = 10000;
   const DRAG_COEFF = 0.015;
@@ -92,12 +96,8 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
       }
     }
 
-    // apply rotations
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(aircraft.quaternion);
-    const qPitch = new THREE.Quaternion().setFromAxisAngle(right, aircraft.rotationSpeed.pitch * dt);
-    const qYaw = new THREE.Quaternion().setFromAxisAngle(up, aircraft.rotationSpeed.yaw * dt);
-    const qRoll = new THREE.Quaternion().setFromAxisAngle(forward, aircraft.rotationSpeed.roll * dt);
-    aircraft.quaternion.multiply(qYaw).multiply(qPitch).multiply(qRoll).normalize();
+    // apply improved turning logic
+    applyTurning(dt);
 
     // integrate position
     aircraft.position.addScaledVector(aircraft.velocity, dt);
@@ -117,4 +117,31 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
       emitCrashParticles(aircraft.position, hitType);
     }
   };
+
+  function applyTurning(dt) {
+    const speed = aircraft.velocity.length();
+    
+    const speedFactor = Math.max(0.1, MIN_TURN_SPEED / Math.max(speed, MIN_TURN_SPEED));
+    const scaledYaw = aircraft.rotationSpeed.yaw * speedFactor;
+    const scaledPitch = aircraft.rotationSpeed.pitch * speedFactor;
+    const scaledRoll = aircraft.rotationSpeed.roll;
+
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(aircraft.quaternion);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(aircraft.quaternion);
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(aircraft.quaternion);
+
+    const qPitch = new THREE.Quaternion().setFromAxisAngle(right, scaledPitch * dt);
+    const qYaw = new THREE.Quaternion().setFromAxisAngle(up, scaledYaw * dt);
+    const bankRoll = scaledYaw * BANK_ANGLE_FACTOR * speed;
+    const qRoll = new THREE.Quaternion().setFromAxisAngle(forward, (scaledRoll + bankRoll) * dt);
+
+    aircraft.quaternion.multiply(qYaw).multiply(qPitch).multiply(qRoll).normalize();
+
+    if (speed > 1) {
+      const currentForward = new THREE.Vector3(0, 0, -1).applyQuaternion(aircraft.quaternion);
+      const velocityDirection = aircraft.velocity.clone().normalize();
+      const alignment = velocityDirection.lerp(currentForward, TURN_COORDINATION * dt);
+      aircraft.velocity.copy(alignment.multiplyScalar(speed));
+    }
+  }
 }
