@@ -9,7 +9,7 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
   aircraft.crashed = false;
 
   // constants
-  const GROUND_LEVEL = 10;
+  const GROUND_LEVEL = 11;
   const TAKEOFF_SPEED = 30;
   const MAX_THRUST = 10000;
   const DRAG_COEFF = 0.015;
