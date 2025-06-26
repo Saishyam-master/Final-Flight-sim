@@ -1,7 +1,7 @@
+// physics.js
 import * as THREE from 'three';
 
 export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
-  // state
   aircraft.velocity = new THREE.Vector3(0, 0, 0);
   aircraft.rotationSpeed = { pitch: 0, yaw: 0, roll: 0 };
   aircraft.throttle = 0;
@@ -9,16 +9,54 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
   aircraft.crashed = false;
 
   // constants
-  const GROUND_LEVEL = 8;
-  const TAKEOFF_SPEED = 30;      // lower threshold for takeoff
-  const MAX_THRUST = 10000;      // stronger engines
-  const DRAG_COEFF = 0.015;      // reduced drag
-  const LIFT_COEFF = 0.03;       // increased lift
+  const GROUND_LEVEL = 10;
+  const TAKEOFF_SPEED = 30;
+  const MAX_THRUST = 10000;
+  const DRAG_COEFF = 0.015;
+  const LIFT_COEFF = 0.03;
   const GRAVITY = 9.81;
-  const MAX_SPEED = 600;         // faster top speed
+  const MAX_SPEED = 600;
   const MASS = 1200;
   const WING_AREA = 16;
   const AIR_DENSITY = 1.225;
+
+  function emitCrashParticles(position, type) {
+    const geometry = new THREE.BufferGeometry();
+    const particles = 200;
+    const positions = new Float32Array(particles * 3);
+
+    for (let i = 0; i < particles; i++) {
+      const i3 = i * 3;
+      positions[i3 + 0] = position.x + (Math.random() - 0.5) * 25;
+      positions[i3 + 1] = position.y + Math.random() * 15;
+      positions[i3 + 2] = position.z + (Math.random() - 0.5) * 25;
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+    const color = type === 'water' ? 0x33ccff : 0xff5500;
+    const size = type === 'water' ? 3 : 2.5;
+    const material = new THREE.PointsMaterial({
+      color,
+      size,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 1
+    });
+
+    const points = new THREE.Points(geometry, material);
+    terrain.parent.add(points);
+
+    let fade = 1;
+    const fadeInterval = setInterval(() => {
+      fade -= 0.04;
+      material.opacity = Math.max(fade, 0);
+      if (fade <= 0) {
+        clearInterval(fadeInterval);
+        terrain.parent.remove(points);
+      }
+    }, 50);
+  }
 
   aircraft.updatePhysics = function (dt) {
     if (aircraft.crashed) return;
@@ -75,8 +113,8 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
     if (hits.length > 0 && aircraft.position.y - hits[0].point.y < 2) {
       aircraft.crashed = true;
       aircraft.velocity.set(0, 0, 0);
-      console.log("💥 Aircraft crashed!");
+      const hitType = hits[0].object === ocean ? 'water' : 'terrain';
+      emitCrashParticles(aircraft.position, hitType);
     }
   };
 }
-
