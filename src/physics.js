@@ -5,7 +5,7 @@ const TURN_COORDINATION = 0.3; // How quickly velocity aligns with orientation
 const BANK_ANGLE_FACTOR = 0.02; // How much to bank during turns
 const MIN_TURN_SPEED = 10; // Minimum speed for effective turning
 
-// Water physics constants
+// Water physics constants - simplified crash detection
 const WATER_SURFACE_LEVEL = 10; // Average water surface height
 const MAX_UNDERWATER_DEPTH = 15; // Maximum depth plane can go underwater
 const WATER_BUOYANCY_FORCE = 25; // Upward force when in water
@@ -27,11 +27,11 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
   // constants
   const GROUND_LEVEL = 11;
   const TAKEOFF_SPEED = 30;
-  const MAX_THRUST = 10000;
+  const MAX_THRUST = 3500; // Reduced for more gradual, realistic acceleration
   const DRAG_COEFF = 0.015;
   const LIFT_COEFF = 0.03;
   const GRAVITY = 9.81;
-  const MAX_SPEED = 600;
+  const MAX_SPEED = 268; // ~600 mph converted to m/s for realistic but fun gameplay
   const MASS = 1200;
   const WING_AREA = 16;
   const AIR_DENSITY = 1.225;
@@ -93,14 +93,9 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
       if (aircraftY <= waterSurfaceY + 2) {
         aircraft.inWater = true;
         aircraft.waterDepth = Math.max(0, waterSurfaceY - aircraftY + 2);
-        
-        // Prevent going too deep underwater
-        if (aircraft.waterDepth > MAX_UNDERWATER_DEPTH) {
-          aircraft.position.y = waterSurfaceY - MAX_UNDERWATER_DEPTH + 2;
-          aircraft.waterDepth = MAX_UNDERWATER_DEPTH;
-          // Apply strong upward force to prevent further descent
-          aircraft.velocity.y = Math.max(aircraft.velocity.y, 0);
-        }
+        // Aircraft is in water but still above crash threshold
+        aircraft.inWater = true;
+        aircraft.waterDepth = Math.max(0, waterSurfaceY - aircraftY + 2);
       } else {
         aircraft.inWater = false;
         aircraft.waterDepth = 0;
@@ -130,23 +125,18 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
       return;
     }
     
-    // Handle water collision (depends on speed and angle)
+    // Handle water collision - crash when going underwater
     if (waterHits.length > 0) {
       const waterSurfaceY = waterHits[0].point.y;
-      const speed = aircraft.velocity.length();
       
-      // Check for water crash (high speed impact)
-      if (aircraft.position.y <= waterSurfaceY + 1 && speed > SAFE_WATER_LANDING_SPEED) {
-        const verticalSpeed = Math.abs(aircraft.velocity.y);
-        
-        // Crash if hitting water too fast or at steep angle
-        if (verticalSpeed > 15 || speed > 100) {
-          aircraft.crashed = true;
-          aircraft.velocity.set(0, 0, 0);
-          emitCrashParticles(aircraft.position, 'water');
-          return;
-        }
+      // Crash if aircraft goes underwater (below surface level)
+      if (aircraft.position.y <= waterSurfaceY + 1) {
+        aircraft.crashed = true;
+        aircraft.velocity.set(0, 0, 0);
+        emitCrashParticles(aircraft.position, "water");
+        return;
       }
+    }
       
       // Create splash effect when entering water at moderate speed
       if (aircraft.inWater && !aircraft.previouslyInWater && speed > WATER_SPLASH_THRESHOLD) {
@@ -216,9 +206,10 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
     );
     
     const liftMag = 0.5 * AIR_DENSITY * speed * speed * WING_AREA * LIFT_COEFF;
-    // Reduce lift effectiveness in water
-    const liftEffectiveness = aircraft.inWater ? 0.3 : 1.0;
-    const lift = up.clone().multiplyScalar((aircraft.position.y > 5 ? liftMag * liftEffectiveness : 0) / MASS);
+    const baseDrag = 0.5 * AIR_DENSITY * speed * dragCoeff * WING_AREA / MASS;
+    // Add progressive drag that increases with speed for more realistic acceleration curve
+    const speedFactor = 1 + (speed / MAX_SPEED) * 0.8; // Progressive drag increase
+    const drag = aircraft.velocity.clone().multiplyScalar(-baseDrag * speedFactor);
     const gravity = new THREE.Vector3(0, -GRAVITY, 0);
 
     // Add buoyancy force when in water
