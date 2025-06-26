@@ -11,7 +11,6 @@ export function setupEnvironment(scene) {
   scene.background = new THREE.Color(0xcce0ff);
   scene.fog = new THREE.Fog(0xcce0ff, 1000, 50000);
 
-  // Loading manager
   const manager = new THREE.LoadingManager();
   manager.onStart = () => console.log('LoadingManager: load started');
   manager.onLoad = () => console.log('LoadingManager: all textures loaded');
@@ -53,7 +52,7 @@ export function setupEnvironment(scene) {
     return water;
   };
 
-  // 4. TERRAIN + SKY SETUP AFTER TEXTURES LOAD
+  // 4. ON LOAD: SET UP SCENE
   manager.onLoad = () => {
     console.log('--- Textures loaded, building scene features ---');
 
@@ -74,7 +73,7 @@ export function setupEnvironment(scene) {
     uni.sunPosition.value.copy(sunPos);
     console.log('Sky and sunPosition set to', sunPos.toArray());
 
-    // TERRAIN
+    // TERRAIN (Procedural)
     console.log('Creating procedural terrain with fractal noise');
     const width = 50000;
     const depth = 50000;
@@ -83,8 +82,8 @@ export function setupEnvironment(scene) {
     const terrainGeom = new THREE.PlaneGeometry(width, depth, segments, segments);
     const noise = new ImprovedNoise();
 
-    const scale = 0.0005;           // Controls how stretched out the noise is
-    const heightScale = 3000;       // Altitude max (you can increase carefully)
+    const scale = 0.0005;
+    const heightScale = 3000;
     const octaves = 5;
     const persistence = 0.5;
     const lacunarity = 2.0;
@@ -122,12 +121,30 @@ export function setupEnvironment(scene) {
     scene.add(terrain);
     console.log('Procedural terrain added');
 
-    // WATER PATCHES
+    // BASE WATER LAYER UNDER MOUNTAINS
+    console.log('Adding base water to fill voids under terrain');
+    const oceanGeom = new THREE.PlaneGeometry(100000, 100000);
+    const ocean = new Water(oceanGeom, {
+      textureWidth: 512,
+      textureHeight: 512,
+      waterNormals: waterNormals,
+      sunDirection: sunPos.clone().normalize(),
+      sunColor: 0xffffff,
+      waterColor: 0x001e0f,
+      distortionScale: 2.0,
+      fog: true,
+    });
+    ocean.rotation.x = -Math.PI / 2;
+    ocean.position.y = -100; // Water level - adjust as needed
+    scene.add(ocean);
+    console.log('Base water layer added at y = -100');
+
+    // OPTIONAL SMALLER WATER PATCHES
     console.log('Creating multiple water patches');
-    createWaterPatch(0, 0, 8000, 10, sunPos);           // Large central lake
-    createWaterPatch(12000, -5000, 4000, 12, sunPos);   // Smaller pond #1
-    createWaterPatch(-15000, 8000, 3000, 8, sunPos);    // Smaller pond #2
-    createWaterPatch(5000, 15000, 3500, 11, sunPos);    // Smaller pond #3
+    createWaterPatch(0, 0, 8000, 10, sunPos);
+    createWaterPatch(12000, -5000, 4000, 12, sunPos);
+    createWaterPatch(-15000, 8000, 3000, 8, sunPos);
+    createWaterPatch(5000, 15000, 3500, 11, sunPos);
 
     // DEBUG HELPERS
     console.log('Adding debug helpers');
