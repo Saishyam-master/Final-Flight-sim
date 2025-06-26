@@ -4,30 +4,25 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 export async function loadAircraft(scene) {
   const loader = new GLTFLoader();
-
   return new Promise((resolve, reject) => {
     loader.load(
       '/cessna.glb',
       (gltf) => {
-        const root = gltf.scene;
-        root.scale.set(3, 3, 3);
-        root.position.set(0, 1.2, 0);
+        const plane = gltf.scene;
+        plane.scale.set(3, 3, 3);
+        // initial Y is set externally in main.js
+        plane.position.set(0, 0, 0);
 
-        console.group('Aircraft Hierarchy');
-        console.log(root);
-        root.traverse((node) => console.log(node.type, node.name));
-        console.groupEnd();
-
-        root.traverse((node) => {
-          if (node.isMesh) {
-            node.rotation.set(0, -Math.PI / 2, 0);
-            node.castShadow = true;
-            node.receiveShadow = true;
+        plane.traverse((n) => {
+          if (n.isMesh) {
+            n.rotation.set(0, -Math.PI / 2, 0);
+            n.castShadow = true;
+            n.receiveShadow = true;
           }
         });
 
-        scene.add(root);   // 🚨 Adds the plane directly to the scene
-        resolve(root);     // Then resolves it
+        scene.add(plane);
+        resolve(plane);
       },
       undefined,
       reject
