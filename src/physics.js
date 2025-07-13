@@ -12,7 +12,11 @@ const WATER_BUOYANCY_FORCE = 25; // Upward force when in water
 const WATER_DRAG_COEFFICIENT = 0.08; // Additional drag in water
 const WATER_RESISTANCE_FACTOR = 0.6; // Speed reduction factor in water
 const SAFE_WATER_LANDING_SPEED = 25; // Speed below which water landing is safe
-const WATER_SPLASH_THRESHOLD = 5; // Speed threshold for splash effects
+const WATER_SPLASH_THRESHOLD = 5; /**
+ * Initializes and manages the physics simulation for an aircraft, including aerodynamic forces, water and terrain interactions, collision detection, and crash effects.
+ *
+ * Sets up the aircraft's physical state and attaches an `updatePhysics(dt)` method for per-frame simulation. Handles takeoff logic, stall and lift dynamics, water entry and buoyancy, crash cutscenes, and visual effects for splashes and crashes. Integrates with Three.js objects for terrain, ocean, and camera.
+ */
 
 export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   aircraft.velocity = new THREE.Vector3(0, 0, 0);
@@ -36,6 +40,15 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   const WING_AREA = 16;
   const AIR_DENSITY = 1.225;
 
+  /**
+   * Emits a burst of crash particles at the specified position to visually represent a crash event.
+   * 
+   * The particle effect differs in color and size depending on whether the crash occurred on water or terrain.
+   * Particles are automatically faded out and removed after a short duration.
+   * 
+   * @param {THREE.Vector3} position - The world position where the crash particles should be emitted.
+   * @param {string} type - The type of crash, either 'water' or 'terrain', which determines the particle color and size.
+   */
   function emitCrashParticles(position, type) {
     const geometry = new THREE.BufferGeometry();
     const particles = 200;
@@ -73,6 +86,10 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
       }
     }, 50);
   }
+  /**
+   * Displays a full-screen "Game Over" overlay with a restart button after a crash.
+   * Prevents multiple overlays from appearing and reloads the page when the restart button is clicked.
+   */
   function showGameOverScreen() {
     if (document.getElementById('game-over-overlay')) return; // Prevent duplicates
 
@@ -101,6 +118,14 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
     };
   }
 
+  /**
+   * Plays a crash cutscene with camera shake, zoom, and sound effects, then displays the game over screen.
+   * 
+   * The cutscene lasts for 2.5 seconds, during which the camera shakes, zooms in, and focuses on the aircraft. If the crash type is 'terrain', a crash sound is played. After the cutscene, the camera is reset and the game over overlay is shown.
+   * 
+   * @param {THREE.PerspectiveCamera} camera - The camera to animate during the cutscene.
+   * @param {string} [crashType='terrain'] - The type of crash ('terrain' or 'water'), which determines if a crash sound is played.
+   */
   function triggerCrashCutscene(camera, crashType = 'terrain') {
     const initialFov = camera.fov;
     const originalPosition = camera.position.clone();
@@ -158,6 +183,11 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
     }, 50);
   }
 
+  /**
+   * Updates the aircraft's water interaction state by detecting proximity to the water surface.
+   *
+   * Sets the aircraft's `inWater` and `waterDepth` properties based on its position relative to the water surface. Limits maximum underwater depth and prevents further descent by adjusting position and upward velocity if necessary.
+   */
   function checkWaterInteraction() {
     // Check if aircraft is near or in water
     const ray = new THREE.Raycaster(
@@ -195,6 +225,11 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
     }
   }
 
+  /**
+   * Detects and handles collisions between the aircraft and terrain or water.
+   *
+   * Triggers a crash sequence and particle effects if the aircraft collides with terrain or impacts water at unsafe speed or angle. Emits splash effects when entering water at moderate speed. Updates the aircraft's crash state and previous water state accordingly.
+   */
   function handleCollisions() {
     const ray = new THREE.Raycaster(
       aircraft.position.clone().add(new THREE.Vector3(0, 100, 0)),
@@ -243,6 +278,12 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
     aircraft.previouslyInWater = aircraft.inWater;
   }
 
+  /**
+   * Emits a splash particle effect at the specified position to simulate water impact.
+   * 
+   * Creates and animates a group of light blue particles that fade out over time, visually representing a splash in the scene.
+   * @param {THREE.Vector3} position - The world position where the splash effect should appear.
+   */
   function emitSplashParticles(position) {
     const geometry = new THREE.BufferGeometry();
     const particles = 150;
@@ -357,6 +398,13 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
     handleCollisions();
   };
 
+  /**
+   * Updates the aircraft's orientation and velocity direction based on current rotation speeds and speed.
+   * 
+   * Adjusts pitch, yaw, and roll rates according to speed, applies banking during turns, and gradually aligns the velocity vector with the aircraft's forward direction for coordinated flight.
+   * 
+   * @param {number} dt - Time step in seconds.
+   */
   function applyTurning(dt) {
     const speed = aircraft.velocity.length();
     
