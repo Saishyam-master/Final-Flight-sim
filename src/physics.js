@@ -14,7 +14,7 @@ const WATER_RESISTANCE_FACTOR = 0.6; // Speed reduction factor in water
 const SAFE_WATER_LANDING_SPEED = 25; // Speed below which water landing is safe
 const WATER_SPLASH_THRESHOLD = 5; // Speed threshold for splash effects
 
-export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
+export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   aircraft.velocity = new THREE.Vector3(0, 0, 0);
   aircraft.rotationSpeed = { pitch: 0, yaw: 0, roll: 0 };
   aircraft.throttle = 0;
@@ -27,8 +27,8 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
   // constants
   const GROUND_LEVEL = 11;
   const TAKEOFF_SPEED = 30;
-  const MAX_THRUST = 10000;
-  const DRAG_COEFF = 0.015;
+  const MAX_THRUST = 8000;
+  const DRAG_COEFF = 0.01;
   const LIFT_COEFF = 0.03;
   const GRAVITY = 9.81;
   const MAX_SPEED = 600;
@@ -70,6 +70,90 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
       if (fade <= 0) {
         clearInterval(fadeInterval);
         terrain.parent.remove(points);
+      }
+    }, 50);
+  }
+  function showGameOverScreen() {
+    if (document.getElementById('game-over-overlay')) return; // Prevent duplicates
+
+    const overlay = document.createElement('div');
+    overlay.id = 'game-over-overlay';
+    overlay.style.position = 'fixed';
+    overlay.style.top = 0;
+    overlay.style.left = 0;
+    overlay.style.width = '100vw';
+    overlay.style.height = '100vh';
+    overlay.style.background = 'rgba(0,0,0,0.85)';
+    overlay.style.display = 'flex';
+    overlay.style.flexDirection = 'column';
+    overlay.style.alignItems = 'center';
+    overlay.style.justifyContent = 'center';
+    overlay.style.zIndex = 9999;
+    overlay.innerHTML = `
+      <h1 style="color: #fff; font-size: 3em; margin-bottom: 0.5em;">Game Over</h1>
+      <p style="color: #fff; font-size: 1.5em; margin-bottom: 2em;">You crashed!</p>
+      <button id="restart-btn" style="font-size: 1.2em; padding: 0.5em 2em;">Restart</button>
+    `;
+    document.body.appendChild(overlay);
+
+    document.getElementById('restart-btn').onclick = () => {
+      window.location.reload();
+    };
+  }
+
+  function triggerCrashCutscene(camera, crashType = 'terrain') {
+    const initialFov = camera.fov;
+    const originalPosition = camera.position.clone();
+    const originalLookAt = aircraft.position.clone();
+
+    let time = 0;
+    const duration = 2.5; // seconds for cutscene
+    let crashSound;
+
+    // Optional: Load crash sound
+    const listener = new THREE.AudioListener();
+    camera.add(listener);
+
+    if (!camera.crashAudio && crashType === 'terrain') {
+      const audioLoader = new THREE.AudioLoader();
+      crashSound = new THREE.Audio(listener);
+      audioLoader.load('sounds/crash1.mp3', (buffer) => {
+        crashSound.setBuffer(buffer);
+        crashSound.setVolume(0.6);
+        crashSound.play();
+      });
+      camera.crashAudio = crashSound;
+    }
+
+    const interval = setInterval(() => {
+      time += 0.05;
+
+      // Camera shake
+      camera.position.x += (Math.random() - 0.5) * 0.8;
+      camera.position.y += (Math.random() - 0.5) * 0.8;
+      camera.position.z += (Math.random() - 0.5) * 0.8;
+
+      // Zoom in
+      camera.fov = initialFov - Math.min(time * 15, 10);
+      camera.updateProjectionMatrix();
+
+      // Look at aircraft
+      camera.lookAt(aircraft.position);
+
+      // End cutscene
+      if (time >= duration) {
+        clearInterval(interval);
+        camera.fov = initialFov;
+        camera.position.copy(originalPosition);
+        camera.lookAt(originalLookAt);
+        camera.updateProjectionMatrix();
+
+        // Optional: Fade to black
+        if (typeof triggerScreenFade === 'function') {
+          triggerScreenFade();
+        }
+        // Show game over overlay
+        showGameOverScreen();
       }
     }, 50);
   }
@@ -127,6 +211,7 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
       aircraft.crashed = true;
       aircraft.velocity.set(0, 0, 0);
       emitCrashParticles(aircraft.position, 'terrain');
+      if (camera) triggerCrashCutscene(camera, 'terrain');
       return;
     }
     
@@ -144,6 +229,7 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
           aircraft.crashed = true;
           aircraft.velocity.set(0, 0, 0);
           emitCrashParticles(aircraft.position, 'water');
+          if (camera) triggerCrashCutscene(camera, 'water');
           return;
         }
       }
@@ -215,7 +301,19 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean) {
       -0.5 * AIR_DENSITY * speed * dragCoeff * WING_AREA / MASS
     );
     
-    const liftMag = 0.5 * AIR_DENSITY * speed * speed * WING_AREA * LIFT_COEFF;
+    // Calculate angle of attack (AoA)
+    const velocityDir = aircraft.velocity.clone().normalize();
+    const forwardDir = new THREE.Vector3(0, 0, -1).applyQuaternion(aircraft.quaternion);
+    const aoa = velocityDir.angleTo(forwardDir); // radians
+
+    // Stall if AoA > 15 degrees (~0.26 rad)
+    const isStalled = aoa > 0.26;
+
+    // Dynamic lift/drag coefficients
+    const dynamicLiftCoeff = isStalled ? 0.01 : LIFT_COEFF * Math.cos(aoa);
+    const dynamicDragCoeff = DRAG_COEFF + 0.05 * Math.abs(Math.sin(aoa));
+
+    const liftMag = 0.5 * AIR_DENSITY * speed * speed * WING_AREA * dynamicLiftCoeff;
     // Reduce lift effectiveness in water
     const liftEffectiveness = aircraft.inWater ? 0.3 : 1.0;
     const lift = up.clone().multiplyScalar((aircraft.position.y > 5 ? liftMag * liftEffectiveness : 0) / MASS);
