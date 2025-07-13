@@ -14,7 +14,23 @@ const WATER_RESISTANCE_FACTOR = 0.6; // Speed reduction factor in water
 const SAFE_WATER_LANDING_SPEED = 25; // Speed below which water landing is safe
 const WATER_SPLASH_THRESHOLD = 5; // Speed threshold for splash effects
 
+/**
+ * Initializes and manages the physics simulation for an aircraft.
+ * 
+ * Includes aerodynamic forces, buoyancy, drag, takeoff logic, water interaction,
+ * crash detection, cutscene rendering, and collision handling. 
+ * Adds an `updatePhysics(dt)` method directly to the aircraft object.
+ *
+ * @param {THREE.Object3D} aircraft - The aircraft object to apply physics to.
+ * @param {Function} onTakeoff - Callback invoked on takeoff.
+ * @param {THREE.Object3D} terrain - The terrain mesh for collision.
+ * @param {THREE.Object3D} ocean - The ocean mesh for water detection.
+ * @param {THREE.PerspectiveCamera} camera - The camera used for rendering effects.
+ * @returns {void}
+ */
+
 export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
+  // Initialize aircraft state
   aircraft.velocity = new THREE.Vector3(0, 0, 0);
   aircraft.rotationSpeed = { pitch: 0, yaw: 0, roll: 0 };
   aircraft.throttle = 0;
@@ -24,7 +40,7 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   aircraft.waterDepth = 0;
   aircraft.previouslyInWater = false;
 
-  // constants
+  // Aerodynamic and environment constants
   const GROUND_LEVEL = 11;
   const TAKEOFF_SPEED = 30;
   const MAX_THRUST = 8000;
@@ -35,6 +51,12 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   const MASS = 1200;
   const WING_AREA = 16;
   const AIR_DENSITY = 1.225;
+
+  /**
+   * Emits particles to simulate a crash impact.
+   * @param {THREE.Vector3} position - World coordinates for particle emission.
+   * @param {string} type - Type of crash ('terrain' or 'water').
+   */
 
   function emitCrashParticles(position, type) {
     const geometry = new THREE.BufferGeometry();
@@ -73,6 +95,11 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
       }
     }, 50);
   }
+  /**
+   * Displays a "Game Over" overlay UI and reload button.
+   * Prevents duplicate overlays from appearing.
+   */
+
   function showGameOverScreen() {
     if (document.getElementById('game-over-overlay')) return; // Prevent duplicates
 
@@ -100,6 +127,13 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
       window.location.reload();
     };
   }
+
+   /**
+   * Triggers a crash cutscene with effects like camera shake and zoom.
+   * 
+   * @param {THREE.PerspectiveCamera} camera - The camera to animate.
+   * @param {string} [crashType='terrain'] - Crash type for sound/effect handling.
+   */
 
   function triggerCrashCutscene(camera, crashType = 'terrain') {
     const initialFov = camera.fov;
@@ -157,6 +191,9 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
       }
     }, 50);
   }
+  /**
+   * Detects whether the aircraft is in water and applies buoyancy/limits depth.
+   */
 
   function checkWaterInteraction() {
     // Check if aircraft is near or in water
@@ -166,6 +203,7 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
       0,
       200
     );
+
     
     const waterHits = ray.intersectObject(ocean, true);
     
@@ -194,6 +232,10 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
       aircraft.waterDepth = 0;
     }
   }
+  /**
+   * Handles collision logic for terrain and water.
+   * Updates crash state, emits particles, and plays cutscene if necessary.
+   */
 
   function handleCollisions() {
     const ray = new THREE.Raycaster(
@@ -242,6 +284,10 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
     
     aircraft.previouslyInWater = aircraft.inWater;
   }
+  /**
+   * Emits splash particles at the given position to simulate water entry.
+   * @param {THREE.Vector3} position - World coordinates of splash.
+   */
 
   function emitSplashParticles(position) {
     const geometry = new THREE.BufferGeometry();
@@ -278,6 +324,13 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
       }
     }, 50);
   }
+  
+  /**
+   * Advances physics for the aircraft for one time step.
+   * Includes thrust, drag, lift, buoyancy, collisions, and motion integration.
+   * @method
+   * @param {number} dt - Time step in seconds.
+   */
 
   aircraft.updatePhysics = function (dt) {
     if (aircraft.crashed) return;
@@ -356,7 +409,13 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
     // Enhanced collision detection
     handleCollisions();
   };
-
+  
+  /**
+   * Updates aircraft rotation based on control input and velocity.
+   * Applies banking and gradual velocity alignment.
+   * @param {number} dt - Time step in seconds.
+   */
+  
   function applyTurning(dt) {
     const speed = aircraft.velocity.length();
     
