@@ -27,17 +27,15 @@ const SMOKE_TEX = loader.load('textures/smoke.png');
 const FIRE_TEX  = loader.load('textures/fire.png');
 
 /**
- * Initializes and manages the physics simulation for an aircraft.
+ * Sets up and manages the complete physics simulation for an aircraft, including aerodynamic forces, multi-point collision detection, water interactions, crash cutscenes, and advanced fire and smoke particle effects.
  *
- * Defines multi-point collision impact, aerodynamic forces, water logic,
- * crash cutscene, and advanced fire & smoke streams at impact.
+ * Adds physics-related properties and methods to the aircraft object, such as velocity, rotation speeds, airborne and crash state, and an `updatePhysics(dt)` method for per-frame simulation. Handles realistic takeoff, landing, stall, buoyancy, and crash scenarios with visual effects and game-over logic.
  *
- * @param {THREE.Object3D} aircraft - The aircraft mesh to control.
- * @param {Function} onTakeoff      - Callback invoked once on takeoff.
- * @param {THREE.Object3D} terrain  - Terrain mesh for collision.
- * @param {THREE.Object3D} ocean    - Ocean mesh for water interaction.
- * @param {THREE.PerspectiveCamera} camera - Camera for crash cutscenes.
- * @returns {void}
+ * @param {THREE.Object3D} aircraft - The aircraft mesh to be controlled and simulated.
+ * @param {Function} onTakeoff - Callback invoked once when the aircraft takes off.
+ * @param {THREE.Object3D} terrain - Terrain mesh used for collision detection.
+ * @param {THREE.Object3D} ocean - Ocean mesh used for water interaction and buoyancy.
+ * @param {THREE.PerspectiveCamera} camera - Camera used for crash cutscenes.
  */
 export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   /**
@@ -77,9 +75,11 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   const activeStreams = [];
 
   /**
-   * Emits a realistic fire + smoke effect at the given world position.
-   * Fire appears first, then smoke fades in, both covering the aircraft mesh.
-   * @param {THREE.Vector3} position - World impact location.
+   * Creates and animates a realistic fire and smoke particle effect at a specified world position, simulating an aircraft crash.
+   *
+   * Fire particles are emitted first, rapidly rising and flickering, followed by delayed smoke particles that drift and fade out. The effect spatially covers the impact area and is automatically removed when finished.
+   *
+   * @param {THREE.Vector3} position - The world-space location where the crash effect should be centered.
    */
   function emitCrashStream(position) {
     const group = new THREE.Group();
@@ -95,7 +95,20 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
       center.clone().addScalar(6)
     );
 
-    // Helper to create a single particle
+    /**
+     * Creates and adds a single particle sprite to the current particle group with specified properties.
+     * 
+     * @param {THREE.Texture} tex - The texture to use for the particle.
+     * @param {number} size - The initial size of the particle.
+     * @param {number} color - The color of the particle.
+     * @param {number} opacity - The initial opacity of the particle.
+     * @param {THREE.Vector3} pos - The initial position of the particle.
+     * @param {THREE.Vector3} vel - The initial velocity of the particle.
+     * @param {number} fade - The fade-out duration or rate for the particle.
+     * @param {number} expand - The rate at which the particle expands.
+     * @param {boolean} animate - Whether the particle should animate (e.g., flicker).
+     * @return {THREE.Sprite} The created particle sprite.
+     */
     function createParticle(tex, size, color, opacity, pos, vel, fade, expand, animate) {
       const mat = new THREE.SpriteMaterial({
         map: tex,
@@ -156,6 +169,9 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
 
     // Animate all particles
     let time = 0;
+    /**
+     * Animates fire particle sprites by updating their position, velocity, scale, opacity, and color flicker over time, removing them when fully faded.
+     */
     function animateFire() {
       time += 0.016;
       for (let i = group.children.length - 1; i >= 0; i--) {
@@ -223,6 +239,9 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
       }
       // Animate smoke
       let smokeTime = 0;
+      /**
+       * Animates smoke particle sprites over time, updating their position, velocity, scale, and opacity, and removes them from the scene when fully faded.
+       */
       function animateSmoke() {
         smokeTime += 0.016;
         for (let i = smokeSprites.length - 1; i >= 0; i--) {
@@ -251,7 +270,7 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   }
 
   /**
-   * Updates all active fire & smoke streams.
+   * Updates the position, velocity, and opacity of all active fire and smoke particle streams, removing expired streams from the scene.
    * @param {number} dt - Time step in seconds.
    */
   function updateStreams(dt) {
@@ -282,7 +301,8 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   }
 
   /**
-   * Shows a game-over overlay with restart button.
+   * Displays a full-screen game-over overlay with a restart button after a crash.
+   * Prevents multiple overlays by checking for an existing element before creating a new one.
    */
 
   function showGameOverScreen() {
@@ -302,9 +322,9 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   }
 
   /**
-   * Plays crash cutscene (shake, zoom) then shows game-over.
-   * @param {THREE.PerspectiveCamera} cam
-   * @param {'terrain'|'water'} [type='terrain']
+   * Plays a crash cutscene by shaking and zooming the camera, then displays the game-over screen.
+   * @param {THREE.PerspectiveCamera} cam - The camera to animate during the cutscene.
+   * @param {'terrain'|'water'} [type='terrain'] - The type of crash, affecting cutscene context.
    */
   function triggerCrashCutscene(cam, type = 'terrain') {
     const initialFov = cam.fov;
@@ -332,7 +352,7 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   }
 
   /**
-   * Checks and updates water interaction state.
+   * Updates the aircraft's water interaction state by raycasting to the ocean surface and adjusting position, depth, and velocity if submerged.
    */
   
   function checkWaterInteraction() {
@@ -363,8 +383,10 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   }
 
   /**
-   * Emits splash particles when entering water.
-   * @param {THREE.Vector3} position
+   * Stub for emitting splash particles when the aircraft enters water.
+   * 
+   * Currently unimplemented; included to prevent runtime errors.
+   * @param {THREE.Vector3} position - The world position where the splash effect would occur.
    */
   function emitSplashParticles(position) {
     // TODO: Implement splash effect or leave as is if not needed.
@@ -372,7 +394,9 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   }
 
   /**
-   * Handles multi-point collisions and triggers crash streams.
+   * Performs collision detection at multiple impact points on the aircraft and triggers crash effects or water splash particles as appropriate.
+   *
+   * Checks each defined impact point for proximity to terrain or ocean surfaces. If a collision with terrain or unsafe water landing is detected, marks the aircraft as crashed, stops its movement, emits crash fire and smoke effects, and initiates a crash cutscene. Emits splash particles when entering water at high speed. Updates the aircraft's previous water interaction state.
    */
   function handleCollisions() {
     const down = new THREE.Vector3(0, -1, 0);
@@ -503,7 +527,10 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   };
 
   /**
-   * Applies turning and banking logic.
+   * Updates the aircraft's orientation and velocity direction based on current rotation speeds, applying turning and banking effects.
+   * 
+   * Turning effectiveness is reduced at low speeds. The function applies pitch, yaw, and roll rotations, including a banking roll proportional to yaw and speed. If the aircraft is moving fast enough, the velocity direction is smoothly aligned toward the forward vector to simulate coordinated turns.
+   * 
    * @param {number} dt - Time step in seconds.
    */
 
