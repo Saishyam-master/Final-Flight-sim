@@ -68,18 +68,53 @@ export function setupEnvironment(scene) {
     const lacunarity = 2.0;
     const vertices = geometry.attributes.position.array;
 
-    for (let i = 0; i < vertices.length; i += 3) {
-      const x = vertices[i];
-      const y = vertices[i + 1];
+    // --- Maze mountain peaks (module scope) ---
+    const mazePeaks = [];
+    const mazeRows = 6, mazeCols = 6;
+    const mazeSpacingX = 14000 / (mazeCols - 1);
+    const mazeSpacingY = 14000 / (mazeRows - 1);
+    const mazeStartX = -7000, mazeStartY = -7000;
+    for (let i = 0; i < mazeRows; i++) {
+      for (let j = 0; j < mazeCols; j++) {
+        // Create a maze-like pattern: skip some cells for "paths"
+        if ((i + j) % 2 === 0 && !(i === 0 && j === 0) && !(i === mazeRows-1 && j === mazeCols-1)) {
+          mazePeaks.push({
+            x: mazeStartX + j * mazeSpacingX,
+            y: mazeStartY + i * mazeSpacingY,
+            radius: 1800 + Math.random() * 800,
+            height: 1.7 + Math.random() * 0.5
+          });
+        }
+      }
+    }
+    const mazeGoal = { x: mazeStartX + (mazeCols-1) * mazeSpacingX, y: mazeStartY + (mazeRows-1) * mazeSpacingY };
+
+    const customTerrainHeight = (x, y) => {
       let elevation = 0;
+      // Maze mountains
+      for (const peak of mazePeaks) {
+        const dist = Math.sqrt((x - peak.x) ** 2 + (y - peak.y) ** 2);
+        if (dist < peak.radius) {
+          elevation += peak.height * Math.cos((Math.PI * dist) / (2 * peak.radius));
+        }
+      }
+      // Add some noise for realism
+      let noiseElevation = 0;
       let frequency = scale;
       let amplitude = 1;
       for (let o = 0; o < octaves; o++) {
-        elevation += noise.noise(x * frequency, y * frequency, 0) * amplitude;
+        noiseElevation += noise.noise(x * frequency, y * frequency, 0) * amplitude;
         frequency *= lacunarity;
         amplitude *= persistence;
       }
-      vertices[i + 2] = elevation * heightScale;
+      elevation += 0.3 * noiseElevation;
+      return elevation;
+    };
+
+    for (let i = 0; i < vertices.length; i += 3) {
+      const x = vertices[i];
+      const y = vertices[i + 1];
+      vertices[i + 2] = customTerrainHeight(x, y) * heightScale;
     }
 
     geometry.computeVertexNormals();
@@ -117,5 +152,98 @@ export function setupEnvironment(scene) {
 
     scene.add(new THREE.GridHelper(10000, 100));
     scene.add(new THREE.AxesHelper(5000));
+
+    // --- Minimap globals and functions (module scope) ---
+    let minimap, minimapCtx;
+    const minimapWidth = 180, minimapHeight = 180;
+    let minimapDrawn = false;
+    let minimapReady = false;
+    let minimapWidthWorld = 50000;
+    let minimapDepthWorld = 50000;
+    let minimapCustomTerrainHeight = null;
+
+    function drawMinimapBase() {
+      if (!minimap || !minimapCustomTerrainHeight) return;
+      // Draw heightmap
+      for (let px = 0; px < minimapWidth; px++) {
+        for (let py = 0; py < minimapHeight; py++) {
+          const tx = (px / minimapWidth - 0.5) * minimapWidthWorld;
+          const ty = (py / minimapHeight - 0.5) * minimapDepthWorld;
+          let h = minimapCustomTerrainHeight ? minimapCustomTerrainHeight(tx, ty) : 0;
+          h = (h + 1.5) / 3.5;
+          const shade = Math.floor(80 + 160 * h);
+          minimapCtx.fillStyle = `rgb(${shade},${shade},${shade})`;
+          minimapCtx.fillRect(px, minimapHeight - py - 1, 1, 1);
+        }
+      }
+      // Draw mountain peaks as triangles
+      minimapCtx.save();
+      minimapCtx.font = 'bold 16px sans-serif';
+      minimapCtx.textAlign = 'center';
+      minimapCtx.textBaseline = 'middle';
+      for (const peak of mazePeaks) {
+        const px = Math.floor(((peak.x / minimapWidthWorld) + 0.5) * minimapWidth);
+        const py = minimapHeight - Math.floor(((peak.y / minimapDepthWorld) + 0.5) * minimapHeight);
+        minimapCtx.fillStyle = '#222';
+        minimapCtx.strokeStyle = '#fff';
+        minimapCtx.lineWidth = 2;
+        minimapCtx.beginPath();
+        minimapCtx.moveTo(px, py - 8);
+        minimapCtx.lineTo(px - 7, py + 7);
+        minimapCtx.lineTo(px + 7, py + 7);
+        minimapCtx.closePath();
+        minimapCtx.fillStyle = '#fff';
+        minimapCtx.fill();
+        minimapCtx.stroke();
+      }
+      // Draw goal flag
+      const flagPx = Math.floor(((mazeGoal.x / minimapWidthWorld) + 0.5) * minimapWidth);
+      const flagPy = minimapHeight - Math.floor(((mazeGoal.y / minimapDepthWorld) + 0.5) * minimapHeight);
+      minimapCtx.font = 'bold 18px sans-serif';
+      minimapCtx.fillStyle = '#0c0';
+      minimapCtx.fillText('🏁', flagPx, flagPy - 10);
+      minimapCtx.restore();
+      minimapDrawn = true;
+    }
+
+    function updateMinimapAircraft(aircraft) {
+      if (!minimapDrawn || !minimapReady) return;
+      drawMinimapBase();
+      const x = aircraft.position.x;
+      const y = aircraft.position.z;
+      const px = Math.floor(((x / minimapWidthWorld) + 0.5) * minimapWidth);
+      const py = minimapHeight - Math.floor(((y / minimapDepthWorld) + 0.5) * minimapHeight);
+      minimapCtx.save();
+      minimapCtx.beginPath();
+      minimapCtx.arc(px, py, 6, 0, 2 * Math.PI);
+      minimapCtx.fillStyle = '#ff3333';
+      minimapCtx.shadowColor = '#fff';
+      minimapCtx.shadowBlur = 6;
+      minimapCtx.fill();
+      minimapCtx.restore();
+    }
+
+    // --- Minimap setup (inside manager.onLoad) ---
+    minimapWidthWorld = width;
+    minimapDepthWorld = depth;
+    minimapCustomTerrainHeight = customTerrainHeight;
+    if (!document.getElementById('minimap-canvas')) {
+      minimap = document.createElement('canvas');
+      minimap.id = 'minimap-canvas';
+      minimap.width = minimapWidth;
+      minimap.height = minimapHeight;
+      minimap.style.position = 'fixed';
+      minimap.style.right = '24px';
+      minimap.style.bottom = '24px';
+      minimap.style.zIndex = '1001';
+      minimap.style.background = '#222';
+      minimap.style.border = '2px solid #fff';
+      minimap.style.borderRadius = '12px';
+      minimap.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
+      document.body.appendChild(minimap);
+      minimapCtx = minimap.getContext('2d');
+      drawMinimapBase();
+      minimapReady = true;
+    }
   };
 }
