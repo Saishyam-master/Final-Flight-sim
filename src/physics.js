@@ -1,226 +1,355 @@
-// physics.js
+/**
+ * physics.js
+ *
+ * Provides realistic physics simulation for an aircraft, including aerodynamic forces,
+ * multi-point collision detection, water interactions, crash cutscenes, and advanced
+ * fire & smoke particle streams at impact points.
+ */
 import * as THREE from 'three';
 
-const TURN_COORDINATION = 0.3; // How quickly velocity aligns with orientation
-const BANK_ANGLE_FACTOR = 0.02; // How much to bank during turns
-const MIN_TURN_SPEED = 10; // Minimum speed for effective turning
+// Turning physics constants
+const TURN_COORDINATION    = 0.3;
+const BANK_ANGLE_FACTOR    = 0.02;
+const MIN_TURN_SPEED       = 10;
 
 // Water physics constants
-const WATER_SURFACE_LEVEL = 10; // Average water surface height
-const MAX_UNDERWATER_DEPTH = 15; // Maximum depth plane can go underwater
-const WATER_BUOYANCY_FORCE = 25; // Upward force when in water
-const WATER_DRAG_COEFFICIENT = 0.08; // Additional drag in water
-const WATER_RESISTANCE_FACTOR = 0.6; // Speed reduction factor in water
-const SAFE_WATER_LANDING_SPEED = 25; // Speed below which water landing is safe
-const WATER_SPLASH_THRESHOLD = 5; // Speed threshold for splash effects
+const WATER_SURFACE_LEVEL      = 10;
+const MAX_UNDERWATER_DEPTH     = 15;
+const WATER_BUOYANCY_FORCE     = 25;
+const WATER_DRAG_COEFFICIENT   = 0.08;
+const WATER_RESISTANCE_FACTOR  = 0.6;
+const SAFE_WATER_LANDING_SPEED = 25;
+const WATER_SPLASH_THRESHOLD   = 5;
+
+// Preload fire & smoke textures
+const loader    = new THREE.TextureLoader();
+const SMOKE_TEX = loader.load('textures/smoke.png');
+const FIRE_TEX  = loader.load('textures/fire.png');
 
 /**
  * Initializes and manages the physics simulation for an aircraft.
- * 
- * Includes aerodynamic forces, buoyancy, drag, takeoff logic, water interaction,
- * crash detection, cutscene rendering, and collision handling. 
- * Adds an `updatePhysics(dt)` method directly to the aircraft object.
  *
- * @param {THREE.Object3D} aircraft - The aircraft object to apply physics to.
- * @param {Function} onTakeoff - Callback invoked on takeoff.
- * @param {THREE.Object3D} terrain - The terrain mesh for collision.
- * @param {THREE.Object3D} ocean - The ocean mesh for water detection.
- * @param {THREE.PerspectiveCamera} camera - The camera used for rendering effects.
+ * Defines multi-point collision impact, aerodynamic forces, water logic,
+ * crash cutscene, and advanced fire & smoke streams at impact.
+ *
+ * @param {THREE.Object3D} aircraft - The aircraft mesh to control.
+ * @param {Function} onTakeoff      - Callback invoked once on takeoff.
+ * @param {THREE.Object3D} terrain  - Terrain mesh for collision.
+ * @param {THREE.Object3D} ocean    - Ocean mesh for water interaction.
+ * @param {THREE.PerspectiveCamera} camera - Camera for crash cutscenes.
  * @returns {void}
  */
-
 export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
+  /**
+   * Impact points in local space for wings, nose, and tail.
+   * @type {THREE.Vector3[]}
+   */
+  aircraft.impactPoints = [
+    new THREE.Vector3(  5,  0,  0),  // right wingtip
+    new THREE.Vector3( -5,  0,  0),  // left wingtip
+    new THREE.Vector3(  0,  0, 10),  // nose
+    new THREE.Vector3(  0, -1, -8),  // tail
+  ];
+
   // Initialize aircraft state
-  aircraft.velocity = new THREE.Vector3(0, 0, 0);
-  aircraft.rotationSpeed = { pitch: 0, yaw: 0, roll: 0 };
-  aircraft.throttle = 0;
-  aircraft.airborne = false;
-  aircraft.crashed = false;
-  aircraft.inWater = false;
-  aircraft.waterDepth = 0;
+  aircraft.velocity          = new THREE.Vector3();
+  aircraft.rotationSpeed     = { pitch:0, yaw:0, roll:0 };
+  aircraft.throttle          = 0;
+  aircraft.airborne          = false;
+  aircraft.crashed           = false;
+  aircraft.inWater           = false;
+  aircraft.waterDepth        = 0;
   aircraft.previouslyInWater = false;
 
   // Aerodynamic and environment constants
-  const GROUND_LEVEL = 11;
-  const TAKEOFF_SPEED = 30;
-  const MAX_THRUST = 8000;
-  const DRAG_COEFF = 0.01;
-  const LIFT_COEFF = 0.03;
-  const GRAVITY = 9.81;
-  const MAX_SPEED = 600;
-  const MASS = 1200;
-  const WING_AREA = 16;
-  const AIR_DENSITY = 1.225;
+  const GROUND_LEVEL   = 20;
+  const TAKEOFF_SPEED  = 30;
+  const MAX_THRUST     = 8000;
+  const DRAG_COEFF     = 0.01;
+  const LIFT_COEFF     = 0.03;
+  const GRAVITY        = 9.81;
+  const MAX_SPEED      = 600;
+  const MASS           = 1200;
+  const WING_AREA      = 16;
+  const AIR_DENSITY    = 1.225;
+
+  /** @type {{fire: THREE.Points, smoke: THREE.Points, geom: THREE.BufferGeometry, time: number}[]} */
+  const activeStreams = [];
 
   /**
-   * Emits particles to simulate a crash impact.
-   * @param {THREE.Vector3} position - World coordinates for particle emission.
-   * @param {string} type - Type of crash ('terrain' or 'water').
+   * Emits a realistic fire + smoke effect at the given world position.
+   * Fire appears first, then smoke fades in, both covering the aircraft mesh.
+   * @param {THREE.Vector3} position - World impact location.
    */
+  function emitCrashStream(position) {
+    const group = new THREE.Group();
+    const fireCount = 120;
+    const smokeCount = 180;
+    let smokeSprites = [];
 
-  function emitCrashParticles(position, type) {
-    const geometry = new THREE.BufferGeometry();
-    const particles = 200;
-    const positions = new Float32Array(particles * 3);
+    // Use the exact impact point as the center for all particles
+    const center = position.clone();
+    // Use a fixed bounding box around the impact point for coverage
+    const bbox = new THREE.Box3(
+      center.clone().addScalar(-6),
+      center.clone().addScalar(6)
+    );
 
-    for (let i = 0; i < particles; i++) {
-      const i3 = i * 3;
-      positions[i3 + 0] = position.x + (Math.random() - 0.5) * 25;
-      positions[i3 + 1] = position.y + Math.random() * 15;
-      positions[i3 + 2] = position.z + (Math.random() - 0.5) * 25;
+    // Helper to create a single particle
+    function createParticle(tex, size, color, opacity, pos, vel, fade, expand, animate) {
+      const mat = new THREE.SpriteMaterial({
+        map: tex,
+        color: color,
+        opacity: opacity,
+        transparent: true,
+        depthWrite: false,
+        blending: tex === FIRE_TEX ? THREE.AdditiveBlending : THREE.NormalBlending
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.position.copy(pos);
+      sprite.scale.set(size, size, size);
+      sprite.userData = { vel, fade, expand, animate, baseSize: size, opacity };
+      group.add(sprite);
+      return sprite;
     }
 
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    // Fire core (bright, small, fast, climbs up)
+    for (let i = 0; i < fireCount; i++) {
+      // Distribute within bounding box centered at impact
+      const pos = new THREE.Vector3(
+        THREE.MathUtils.lerp(bbox.min.x, bbox.max.x, Math.random()),
+        THREE.MathUtils.lerp(bbox.min.y, bbox.max.y, Math.random()),
+        THREE.MathUtils.lerp(bbox.min.z, bbox.max.z, Math.random())
+      );
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 2,
+        Math.random() * 8 + 8,
+        (Math.random() - 0.5) * 2
+      );
+      const color = new THREE.Color().setHSL(0.08 + Math.random() * 0.06, 1, 0.5 + Math.random() * 0.2);
+      createParticle(
+        FIRE_TEX, 8 + Math.random() * 6, color, 1,
+        pos, vel, 2.2 + Math.random() * 0.7, 1.5 + Math.random(), true
+      );
+    }
 
-    const color = type === 'water' ? 0x33ccff : 0xff5500;
-    const size = type === 'water' ? 3 : 2.5;
-    const material = new THREE.PointsMaterial({
-      color,
-      size,
-      sizeAttenuation: true,
-      transparent: true,
-      opacity: 1
-    });
+    // Fire glow (larger, orange, slower, climbs up)
+    for (let i = 0; i < fireCount / 2; i++) {
+      const pos = new THREE.Vector3(
+        THREE.MathUtils.lerp(bbox.min.x, bbox.max.x, Math.random()),
+        THREE.MathUtils.lerp(bbox.min.y, bbox.max.y, Math.random()),
+        THREE.MathUtils.lerp(bbox.min.z, bbox.max.z, Math.random())
+      );
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 1.5,
+        Math.random() * 5 + 4,
+        (Math.random() - 0.5) * 1.5
+      );
+      const color = new THREE.Color().setHSL(0.07, 1, 0.35 + Math.random() * 0.1);
+      createParticle(
+        FIRE_TEX, 16 + Math.random() * 8, color, 0.8,
+        pos, vel, 2.8 + Math.random(), 2.5 + Math.random(), true
+      );
+    }
 
-    const points = new THREE.Points(geometry, material);
-    terrain.parent.add(points);
+    terrain.parent.add(group);
 
-    let fade = 1;
-    const fadeInterval = setInterval(() => {
-      fade -= 0.04;
-      material.opacity = Math.max(fade, 0);
-      if (fade <= 0) {
-        clearInterval(fadeInterval);
-        terrain.parent.remove(points);
+    // Animate all particles
+    let time = 0;
+    function animateFire() {
+      time += 0.016;
+      for (let i = group.children.length - 1; i >= 0; i--) {
+        const sprite = group.children[i];
+        const ud = sprite.userData;
+        sprite.position.addScaledVector(ud.vel, 0.016);
+        ud.vel.y += 0.12 * 0.016;
+        ud.vel.x += (Math.random() - 0.5) * 0.02;
+        ud.vel.z += (Math.random() - 0.5) * 0.02;
+        sprite.scale.setScalar(ud.baseSize + ud.expand * time);
+        // Fade less aggressively
+        sprite.material.opacity = Math.max(0, ud.opacity * (1 - time / (ud.fade + 1.5)));
+        // Animate fire flicker
+        if (ud.animate && Math.random() < 0.2) {
+          sprite.material.color.offsetHSL(0, 0, (Math.random() - 0.5) * 0.1);
+        }
+        // Remove if faded
+        if (time > ud.fade + 1.5) {
+          group.remove(sprite);
+        }
       }
-    }, 50);
+      if (group.children.length > 0) {
+        requestAnimationFrame(animateFire);
+      }
+    }
+    animateFire();
+
+    // After a short delay, add smoke
+    setTimeout(() => {
+      // Thick smoke (dark, slow, large, rises and drifts)
+      for (let i = 0; i < smokeCount; i++) {
+        const pos = new THREE.Vector3(
+          THREE.MathUtils.lerp(bbox.min.x, bbox.max.x, Math.random()),
+          THREE.MathUtils.lerp(bbox.min.y, bbox.max.y, Math.random()),
+          THREE.MathUtils.lerp(bbox.min.z, bbox.max.z, Math.random())
+        );
+        const vel = new THREE.Vector3(
+          (Math.random() - 0.5) * 1.2,
+          Math.random() * 4 + 2,
+          (Math.random() - 0.5) * 1.2
+        );
+        const color = new THREE.Color().setHSL(0, 0, 0.08 + Math.random() * 0.12);
+        smokeSprites.push(createParticle(
+          SMOKE_TEX, 18 + Math.random() * 12, color, 0.7 + Math.random() * 0.2,
+          pos, vel, 4.5 + Math.random() * 2, 3 + Math.random() * 2, false
+        ));
+      }
+      // Light smoke (gray, very large, slow, fades out, rises and drifts)
+      for (let i = 0; i < smokeCount / 2; i++) {
+        const pos = new THREE.Vector3(
+          THREE.MathUtils.lerp(bbox.min.x, bbox.max.x, Math.random()),
+          THREE.MathUtils.lerp(bbox.min.y, bbox.max.y, Math.random()),
+          THREE.MathUtils.lerp(bbox.min.z, bbox.max.z, Math.random())
+        );
+        const vel = new THREE.Vector3(
+          (Math.random() - 0.5) * 0.8,
+          Math.random() * 2 + 1,
+          (Math.random() - 0.5) * 0.8
+        );
+        const color = new THREE.Color().setHSL(0, 0, 0.25 + Math.random() * 0.15);
+        smokeSprites.push(createParticle(
+          SMOKE_TEX, 32 + Math.random() * 16, color, 0.4 + Math.random() * 0.2,
+          pos, vel, 6 + Math.random() * 2, 4 + Math.random() * 2, false
+        ));
+      }
+      // Animate smoke
+      let smokeTime = 0;
+      function animateSmoke() {
+        smokeTime += 0.016;
+        for (let i = smokeSprites.length - 1; i >= 0; i--) {
+          const sprite = smokeSprites[i];
+          const ud = sprite.userData;
+          sprite.position.addScaledVector(ud.vel, 0.016);
+          ud.vel.y += 0.12 * 0.016;
+          ud.vel.x += (Math.random() - 0.5) * 0.02;
+          ud.vel.z += (Math.random() - 0.5) * 0.02;
+          sprite.scale.setScalar(ud.baseSize + ud.expand * smokeTime);
+          // Fade less aggressively
+          sprite.material.opacity = Math.max(0, ud.opacity * (1 - smokeTime / (ud.fade + 2)));
+          if (smokeTime > ud.fade + 2) {
+            group.remove(sprite);
+            smokeSprites.splice(i, 1);
+          }
+        }
+        if (smokeSprites.length > 0) {
+          requestAnimationFrame(animateSmoke);
+        } else {
+          terrain.parent.remove(group);
+        }
+      }
+      animateSmoke();
+    }, 400); // 400ms delay before smoke appears
   }
+
   /**
-   * Displays a "Game Over" overlay UI and reload button.
-   * Prevents duplicate overlays from appearing.
+   * Updates all active fire & smoke streams.
+   * @param {number} dt - Time step in seconds.
+   */
+  function updateStreams(dt) {
+    for (let i = activeStreams.length - 1; i >= 0; i--) {
+      const s = activeStreams[i];
+      s.time += dt;
+      const pAttr = s.geom.getAttribute('position');
+      const vAttr = s.geom.getAttribute('velocity');
+
+      for (let j = 0; j < pAttr.count; j++) {
+        const j3 = j * 3;
+        vAttr.array[j3+1] -= GRAVITY * dt * 0.2;
+        pAttr.array[j3]   += vAttr.array[j3]   * dt;
+        pAttr.array[j3+1] += vAttr.array[j3+1] * dt;
+        pAttr.array[j3+2] += vAttr.array[j3+2] * dt;
+      }
+      pAttr.needsUpdate = true;
+
+      const fade = 1 - (s.time / 2);
+      s.fire.material.opacity  = Math.max(0, fade);
+      s.smoke.material.opacity = Math.max(0, fade * 0.6);
+
+      if (s.time > 2) {
+        terrain.parent.remove(s.fire, s.smoke);
+        activeStreams.splice(i, 1);
+      }
+    }
+  }
+
+  /**
+   * Shows a game-over overlay with restart button.
    */
 
   function showGameOverScreen() {
-    if (document.getElementById('game-over-overlay')) return; // Prevent duplicates
-
+    if (document.getElementById('game-over-overlay')) return;
     const overlay = document.createElement('div');
     overlay.id = 'game-over-overlay';
-    overlay.style.position = 'fixed';
-    overlay.style.top = 0;
-    overlay.style.left = 0;
-    overlay.style.width = '100vw';
-    overlay.style.height = '100vh';
-    overlay.style.background = 'rgba(0,0,0,0.85)';
-    overlay.style.display = 'flex';
-    overlay.style.flexDirection = 'column';
-    overlay.style.alignItems = 'center';
-    overlay.style.justifyContent = 'center';
-    overlay.style.zIndex = 9999;
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;' +
+      'background:rgba(0,0,0,0.85);display:flex;flex-direction:column;' +
+      'align-items:center;justify-content:center;z-index:9999';
     overlay.innerHTML = `
-      <h1 style="color: #fff; font-size: 3em; margin-bottom: 0.5em;">Game Over</h1>
-      <p style="color: #fff; font-size: 1.5em; margin-bottom: 2em;">You crashed!</p>
-      <button id="restart-btn" style="font-size: 1.2em; padding: 0.5em 2em;">Restart</button>
+      <h1 style="color:#fff;font-size:3em;">Game Over</h1>
+      <p style="color:#fff;font-size:1.5em;">You crashed!</p>
+      <button id="restart-btn" style="font-size:1.2em;padding:0.5em 2em;">Restart</button>
     `;
     document.body.appendChild(overlay);
-
-    document.getElementById('restart-btn').onclick = () => {
-      window.location.reload();
-    };
+    document.getElementById('restart-btn').onclick = () => window.location.reload();
   }
 
-   /**
-   * Triggers a crash cutscene with effects like camera shake and zoom.
-   * 
-   * @param {THREE.PerspectiveCamera} camera - The camera to animate.
-   * @param {string} [crashType='terrain'] - Crash type for sound/effect handling.
+  /**
+   * Plays crash cutscene (shake, zoom) then shows game-over.
+   * @param {THREE.PerspectiveCamera} cam
+   * @param {'terrain'|'water'} [type='terrain']
    */
-
-  function triggerCrashCutscene(camera, crashType = 'terrain') {
-    const initialFov = camera.fov;
-    const originalPosition = camera.position.clone();
-    const originalLookAt = aircraft.position.clone();
-
-    let time = 0;
-    const duration = 2.5; // seconds for cutscene
-    let crashSound;
-
-    // Optional: Load crash sound
-    const listener = new THREE.AudioListener();
-    camera.add(listener);
-
-    if (!camera.crashAudio && crashType === 'terrain') {
-      const audioLoader = new THREE.AudioLoader();
-      crashSound = new THREE.Audio(listener);
-      audioLoader.load('sounds/crash1.mp3', (buffer) => {
-        crashSound.setBuffer(buffer);
-        crashSound.setVolume(0.6);
-        crashSound.play();
-      });
-      camera.crashAudio = crashSound;
-    }
-
-    const interval = setInterval(() => {
-      time += 0.05;
-
-      // Camera shake
-      camera.position.x += (Math.random() - 0.5) * 0.8;
-      camera.position.y += (Math.random() - 0.5) * 0.8;
-      camera.position.z += (Math.random() - 0.5) * 0.8;
-
-      // Zoom in
-      camera.fov = initialFov - Math.min(time * 15, 10);
-      camera.updateProjectionMatrix();
-
-      // Look at aircraft
-      camera.lookAt(aircraft.position);
-
-      // End cutscene
-      if (time >= duration) {
-        clearInterval(interval);
-        camera.fov = initialFov;
-        camera.position.copy(originalPosition);
-        camera.lookAt(originalLookAt);
-        camera.updateProjectionMatrix();
-
-        // Optional: Fade to black
-        if (typeof triggerScreenFade === 'function') {
-          triggerScreenFade();
-        }
-        // Show game over overlay
+  function triggerCrashCutscene(cam, type = 'terrain') {
+    const initialFov = cam.fov;
+    const origPos = cam.position.clone();
+    const origLook = aircraft.position.clone();
+    let t = 0;
+    const dur = 2.5;
+    const rr = setInterval(() => {
+      t += 0.05;
+      cam.position.x += (Math.random()-0.5)*0.8;
+      cam.position.y += (Math.random()-0.5)*0.8;
+      cam.position.z += (Math.random()-0.5)*0.8;
+      cam.fov = initialFov - Math.min(t*15, 10);
+      cam.updateProjectionMatrix();
+      cam.lookAt(aircraft.position);
+      if (t >= dur) {
+        clearInterval(rr);
+        cam.fov = initialFov;
+        cam.position.copy(origPos);
+        cam.lookAt(origLook);
+        cam.updateProjectionMatrix();
         showGameOverScreen();
       }
     }, 50);
   }
-  /**
-   * Detects whether the aircraft is in water and applies buoyancy/limits depth.
-   */
 
+  /**
+   * Checks and updates water interaction state.
+   */
+  
   function checkWaterInteraction() {
-    // Check if aircraft is near or in water
     const ray = new THREE.Raycaster(
       aircraft.position.clone().add(new THREE.Vector3(0, 100, 0)),
-      new THREE.Vector3(0, -1, 0),
-      0,
-      200
+      new THREE.Vector3(0, -1, 0), 0, 200
     );
-
-    
-    const waterHits = ray.intersectObject(ocean, true);
-    
-    if (waterHits.length > 0) {
-      const waterSurfaceY = waterHits[0].point.y;
-      const aircraftY = aircraft.position.y;
-      
-      // Check if aircraft is in water
-      if (aircraftY <= waterSurfaceY + 2) {
+    const hits = ray.intersectObject(ocean, true);
+    if (hits.length) {
+      const wy = hits[0].point.y;
+      const ay = aircraft.position.y;
+      if (ay <= wy + 2) {
         aircraft.inWater = true;
-        aircraft.waterDepth = Math.max(0, waterSurfaceY - aircraftY + 2);
-        
-        // Prevent going too deep underwater
+        aircraft.waterDepth = Math.max(0, wy - ay + 2);
         if (aircraft.waterDepth > MAX_UNDERWATER_DEPTH) {
-          aircraft.position.y = waterSurfaceY - MAX_UNDERWATER_DEPTH + 2;
+          aircraft.position.y = wy - MAX_UNDERWATER_DEPTH + 2;
           aircraft.waterDepth = MAX_UNDERWATER_DEPTH;
-          // Apply strong upward force to prevent further descent
           aircraft.velocity.y = Math.max(aircraft.velocity.y, 0);
         }
       } else {
@@ -232,109 +361,66 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
       aircraft.waterDepth = 0;
     }
   }
-  /**
-   * Handles collision logic for terrain and water.
-   * Updates crash state, emits particles, and plays cutscene if necessary.
-   */
 
+  /**
+   * Emits splash particles when entering water.
+   * @param {THREE.Vector3} position
+   */
+  function emitSplashParticles(position) {
+    // TODO: Implement splash effect or leave as is if not needed.
+    // For now, this is a stub to avoid runtime errors.
+  }
+
+  /**
+   * Handles multi-point collisions and triggers crash streams.
+   */
   function handleCollisions() {
-    const ray = new THREE.Raycaster(
-      aircraft.position.clone().add(new THREE.Vector3(0, 100, 0)),
-      new THREE.Vector3(0, -1, 0),
-      0,
-      200
-    );
-    
-    const terrainHits = ray.intersectObject(terrain, true);
-    const waterHits = ray.intersectObject(ocean, true);
-    
-    // Handle terrain collision (always crashes)
-    if (terrainHits.length > 0 && aircraft.position.y - terrainHits[0].point.y < 2) {
-      aircraft.crashed = true;
-      aircraft.velocity.set(0, 0, 0);
-      emitCrashParticles(aircraft.position, 'terrain');
-      if (camera) triggerCrashCutscene(camera, 'terrain');
-      return;
-    }
-    
-    // Handle water collision (depends on speed and angle)
-    if (waterHits.length > 0) {
-      const waterSurfaceY = waterHits[0].point.y;
-      const speed = aircraft.velocity.length();
-      
-      // Check for water crash (high speed impact)
-      if (aircraft.position.y <= waterSurfaceY + 1 && speed > SAFE_WATER_LANDING_SPEED) {
-        const verticalSpeed = Math.abs(aircraft.velocity.y);
-        
-        // Crash if hitting water too fast or at steep angle
-        if (verticalSpeed > 15 || speed > 100) {
+    const down = new THREE.Vector3(0, -1, 0);
+    const world = aircraft.matrixWorld;
+    for (const pt of aircraft.impactPoints) {
+      if (aircraft.crashed) break;
+      const origin = pt.clone().applyMatrix4(world);
+      const ray = new THREE.Raycaster(origin, down, 0, 200);
+      const tHits = ray.intersectObject(terrain, true);
+      const wHits = ray.intersectObject(ocean,   true);
+      // CRASH ONLY IF CLOSE TO TERRAIN
+      if (tHits.length && origin.y - tHits[0].point.y < 2) {
+        aircraft.crashed = true;
+        aircraft.velocity.set(0, 0, 0);
+        emitCrashStream(tHits[0].point);
+        if (camera) triggerCrashCutscene(camera, 'terrain');
+        return;
+      }
+      if (wHits.length) {
+        const wy = wHits[0].point.y;
+        const speed = aircraft.velocity.length();
+        if (origin.y <= wy + 1 && speed > SAFE_WATER_LANDING_SPEED) {
           aircraft.crashed = true;
           aircraft.velocity.set(0, 0, 0);
-          emitCrashParticles(aircraft.position, 'water');
+          emitCrashStream(wHits[0].point);
           if (camera) triggerCrashCutscene(camera, 'water');
           return;
         }
-      }
-      
-      // Create splash effect when entering water at moderate speed
-      if (aircraft.inWater && !aircraft.previouslyInWater && speed > WATER_SPLASH_THRESHOLD) {
-        emitSplashParticles(aircraft.position);
+        if (aircraft.inWater && !aircraft.previouslyInWater && speed > WATER_SPLASH_THRESHOLD) {
+          emitSplashParticles(origin);
+        }
       }
     }
-    
+    // Update water state
     aircraft.previouslyInWater = aircraft.inWater;
   }
+
   /**
-   * Emits splash particles at the given position to simulate water entry.
-   * @param {THREE.Vector3} position - World coordinates of splash.
-   */
-
-  function emitSplashParticles(position) {
-    const geometry = new THREE.BufferGeometry();
-    const particles = 150;
-    const positions = new Float32Array(particles * 3);
-
-    for (let i = 0; i < particles; i++) {
-      const i3 = i * 3;
-      positions[i3 + 0] = position.x + (Math.random() - 0.5) * 20;
-      positions[i3 + 1] = position.y + Math.random() * 10;
-      positions[i3 + 2] = position.z + (Math.random() - 0.5) * 20;
-    }
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-    const material = new THREE.PointsMaterial({
-      color: 0x88ccff,
-      size: 2,
-      sizeAttenuation: true,
-      transparent: true,
-      opacity: 0.8
-    });
-
-    const points = new THREE.Points(geometry, material);
-    terrain.parent.add(points);
-
-    let fade = 0.8;
-    const fadeInterval = setInterval(() => {
-      fade -= 0.03;
-      material.opacity = Math.max(fade, 0);
-      if (fade <= 0) {
-        clearInterval(fadeInterval);
-        terrain.parent.remove(points);
-      }
-    }, 50);
-  }
-  
-  /**
-   * Advances physics for the aircraft for one time step.
-   * Includes thrust, drag, lift, buoyancy, collisions, and motion integration.
-   * @method
+   * Updates physics and streams per frame.
    * @param {number} dt - Time step in seconds.
    */
+  aircraft.updatePhysics = function(dt) {
+    if (aircraft.crashed) {
+      updateStreams(dt);
+      return;
+    }
 
-  aircraft.updatePhysics = function (dt) {
-    if (aircraft.crashed) return;
-
+    // Aerodynamic forces
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(aircraft.quaternion);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(aircraft.quaternion);
     const speed = aircraft.velocity.length();
@@ -342,104 +428,116 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
     // Check water interaction
     checkWaterInteraction();
 
-    // forces
+    // Thrust
     const thrust = forward.clone().multiplyScalar(aircraft.throttle * MAX_THRUST);
-    
-    // Apply different drag based on water interaction
+
+    // Drag (dynamic, includes AoA)
     let dragCoeff = DRAG_COEFF;
-    if (aircraft.inWater) {
-      dragCoeff += WATER_DRAG_COEFFICIENT;
-    }
+    if (aircraft.inWater) dragCoeff += WATER_DRAG_COEFFICIENT;
     const drag = aircraft.velocity.clone().multiplyScalar(
       -0.5 * AIR_DENSITY * speed * dragCoeff * WING_AREA / MASS
     );
-    
-    // Calculate angle of attack (AoA)
+
+    // Angle of attack (AoA)
     const velocityDir = aircraft.velocity.clone().normalize();
     const forwardDir = new THREE.Vector3(0, 0, -1).applyQuaternion(aircraft.quaternion);
-    const aoa = velocityDir.angleTo(forwardDir); // radians
-
-    // Stall if AoA > 15 degrees (~0.26 rad)
+    const aoa = velocityDir.angleTo(forwardDir);
     const isStalled = aoa > 0.26;
-
-    // Dynamic lift/drag coefficients
     const dynamicLiftCoeff = isStalled ? 0.01 : LIFT_COEFF * Math.cos(aoa);
-    const dynamicDragCoeff = DRAG_COEFF + 0.05 * Math.abs(Math.sin(aoa));
 
+    // Lift
     const liftMag = 0.5 * AIR_DENSITY * speed * speed * WING_AREA * dynamicLiftCoeff;
-    // Reduce lift effectiveness in water
     const liftEffectiveness = aircraft.inWater ? 0.3 : 1.0;
     const lift = up.clone().multiplyScalar((aircraft.position.y > 5 ? liftMag * liftEffectiveness : 0) / MASS);
+
+    // Gravity
     const gravity = new THREE.Vector3(0, -GRAVITY, 0);
 
-    // Add buoyancy force when in water
-    const buoyancy = aircraft.inWater ? 
-      new THREE.Vector3(0, WATER_BUOYANCY_FORCE * Math.min(aircraft.waterDepth / 5, 1), 0) : 
-      new THREE.Vector3(0, 0, 0);
+    // Buoyancy
+    const buoyancy = aircraft.inWater
+      ? new THREE.Vector3(0, WATER_BUOYANCY_FORCE * Math.min(aircraft.waterDepth / 5, 1), 0)
+      : new THREE.Vector3(0, 0, 0);
 
-    // net force and integration
+    // Net force and integration
     const net = new THREE.Vector3();
     net.add(thrust).add(drag).add(lift).add(gravity).add(buoyancy);
     aircraft.velocity.addScaledVector(net, dt);
-    
-    // Apply water resistance to velocity
+
+    // Water resistance
     if (aircraft.inWater) {
       aircraft.velocity.multiplyScalar(1 - (1 - WATER_RESISTANCE_FACTOR) * dt * 2);
     }
 
-    // speed clamp
+    // Speed clamp
     if (aircraft.velocity.length() > MAX_SPEED) aircraft.velocity.setLength(MAX_SPEED);
 
-    // takeoff logic
+    // Takeoff logic
     if (!aircraft.airborne) {
-      aircraft.velocity.y = 0;
-      aircraft.position.y = GROUND_LEVEL;
-      if (aircraft.velocity.dot(forward) > TAKEOFF_SPEED) {
+      // Only lock to ground if at or below ground level
+      if (aircraft.position.y <= GROUND_LEVEL) {
+        aircraft.velocity.y = 0;
+        aircraft.position.y = GROUND_LEVEL;
+      }
+      if (aircraft.velocity.dot(forward) > TAKEOFF_SPEED || aircraft.position.y > GROUND_LEVEL + 1) {
         aircraft.airborne = true;
         onTakeoff && onTakeoff();
       }
     }
 
-    // apply improved turning logic
+    // Turning and motion
     applyTurning(dt);
-
-    // integrate position
+    if (aircraft.airborne) {
+      // Apply gravity only when airborne
+      aircraft.velocity.y -= GRAVITY * dt;
+      // Limit downward speed to prevent excessive fall
+      if (aircraft.velocity.y < -MAX_SPEED * 0.5) aircraft.velocity.y = -MAX_SPEED * 0.5;
+    } else {
+      // Lock to ground when not airborne
+      aircraft.velocity.y = 0;
+    }
     aircraft.position.addScaledVector(aircraft.velocity, dt);
 
-    // Enhanced collision detection
+    // Collisions and streams
     handleCollisions();
+    updateStreams(dt);
   };
-  
+
   /**
-   * Updates aircraft rotation based on control input and velocity.
-   * Applies banking and gradual velocity alignment.
+   * Applies turning and banking logic.
    * @param {number} dt - Time step in seconds.
    */
-  
+
   function applyTurning(dt) {
     const speed = aircraft.velocity.length();
-    
-    const speedFactor = Math.max(0.1, MIN_TURN_SPEED / Math.max(speed, MIN_TURN_SPEED));
-    const scaledYaw = aircraft.rotationSpeed.yaw * speedFactor;
-    const scaledPitch = aircraft.rotationSpeed.pitch * speedFactor;
-    const scaledRoll = aircraft.rotationSpeed.roll;
+    const speedFactor = Math.max(0.1,
+      MIN_TURN_SPEED / Math.max(speed, MIN_TURN_SPEED)
+    );
+    const sy = aircraft.rotationSpeed.yaw   * speedFactor;
+    const sp = aircraft.rotationSpeed.pitch * speedFactor;
+    const sr = aircraft.rotationSpeed.roll;
 
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(aircraft.quaternion);
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(aircraft.quaternion);
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(aircraft.quaternion);
+    const right   = new THREE.Vector3(1,0,0).applyQuaternion(aircraft.quaternion);
+    const up      = new THREE.Vector3(0,1,0).applyQuaternion(aircraft.quaternion);
+    const forward = new THREE.Vector3(0,0,-1).applyQuaternion(aircraft.quaternion);
 
-    const qPitch = new THREE.Quaternion().setFromAxisAngle(right, scaledPitch * dt);
-    const qYaw = new THREE.Quaternion().setFromAxisAngle(up, scaledYaw * dt);
-    const bankRoll = scaledYaw * BANK_ANGLE_FACTOR * speed;
-    const qRoll = new THREE.Quaternion().setFromAxisAngle(forward, (scaledRoll + bankRoll) * dt);
+    const qPitch   = new THREE.Quaternion().setFromAxisAngle(right,   sp * dt);
+    const qYaw     = new THREE.Quaternion().setFromAxisAngle(up,      sy * dt);
+    const bankRoll = sy * BANK_ANGLE_FACTOR * speed;
+    const qRoll    = new THREE.Quaternion().setFromAxisAngle(
+      forward, (sr + bankRoll) * dt
+    );
 
-    aircraft.quaternion.multiply(qYaw).multiply(qPitch).multiply(qRoll).normalize();
+    aircraft.quaternion
+      .multiply(qYaw)
+      .multiply(qPitch)
+      .multiply(qRoll)
+      .normalize();
 
     if (speed > 1) {
-      const currentForward = new THREE.Vector3(0, 0, -1).applyQuaternion(aircraft.quaternion);
-      const velocityDirection = aircraft.velocity.clone().normalize();
-      const alignment = velocityDirection.lerp(currentForward, TURN_COORDINATION * dt);
-      aircraft.velocity.copy(alignment.multiplyScalar(speed));
+      const cf = new THREE.Vector3(0,0,-1).applyQuaternion(aircraft.quaternion);
+      const vd = aircraft.velocity.clone().normalize();
+      vd.lerp(cf, TURN_COORDINATION * dt);
+      aircraft.velocity.copy(vd.multiplyScalar(speed));
     }
   }
 }
