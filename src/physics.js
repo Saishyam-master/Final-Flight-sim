@@ -15,18 +15,15 @@ const SAFE_WATER_LANDING_SPEED = 25; // Speed below which water landing is safe
 const WATER_SPLASH_THRESHOLD = 5; // Speed threshold for splash effects
 
 /**
- * Initializes and manages the physics simulation for an aircraft.
- * 
- * Includes aerodynamic forces, buoyancy, drag, takeoff logic, water interaction,
- * crash detection, cutscene rendering, and collision handling. 
- * Adds an `updatePhysics(dt)` method directly to the aircraft object.
+ * Attaches a comprehensive physics simulation to an aircraft object, enabling realistic flight dynamics, water interaction, and crash handling.
  *
- * @param {THREE.Object3D} aircraft - The aircraft object to apply physics to.
- * @param {Function} onTakeoff - Callback invoked on takeoff.
- * @param {THREE.Object3D} terrain - The terrain mesh for collision.
- * @param {THREE.Object3D} ocean - The ocean mesh for water detection.
- * @param {THREE.PerspectiveCamera} camera - The camera used for rendering effects.
- * @returns {void}
+ * Simulates aerodynamic forces, buoyancy, drag, lift, takeoff, and stall behavior. Detects and responds to collisions with terrain and water, including visual and audio crash effects, splash particles, and a game over overlay. Adds an `updatePhysics(dt)` method to the aircraft for advancing the simulation each frame.
+ *
+ * @param {THREE.Object3D} aircraft - The aircraft object to receive physics simulation.
+ * @param {Function} onTakeoff - Callback invoked when the aircraft successfully takes off.
+ * @param {THREE.Object3D} terrain - Terrain mesh used for collision detection.
+ * @param {THREE.Object3D} ocean - Ocean mesh used for water interaction and buoyancy.
+ * @param {THREE.PerspectiveCamera} camera - Camera used for crash cutscenes and visual effects.
  */
 
 export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
@@ -53,9 +50,12 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   const AIR_DENSITY = 1.225;
 
   /**
-   * Emits particles to simulate a crash impact.
-   * @param {THREE.Vector3} position - World coordinates for particle emission.
-   * @param {string} type - Type of crash ('terrain' or 'water').
+   * Emits a burst of particles at the specified position to visually simulate a crash impact.
+   * 
+   * The particle color and size vary depending on the crash type ('terrain' or 'water'). Particles fade out and are removed automatically.
+   * 
+   * @param {THREE.Vector3} position - The world coordinates where the crash particles are emitted.
+   * @param {string} type - The type of crash, either 'terrain' or 'water', which determines particle appearance.
    */
 
   function emitCrashParticles(position, type) {
@@ -96,8 +96,7 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
     }, 50);
   }
   /**
-   * Displays a "Game Over" overlay UI and reload button.
-   * Prevents duplicate overlays from appearing.
+   * Displays a full-screen "Game Over" overlay with a restart button, ensuring only one overlay is shown at a time.
    */
 
   function showGameOverScreen() {
@@ -129,10 +128,12 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   }
 
    /**
-   * Triggers a crash cutscene with effects like camera shake and zoom.
-   * 
-   * @param {THREE.PerspectiveCamera} camera - The camera to animate.
-   * @param {string} [crashType='terrain'] - Crash type for sound/effect handling.
+   * Animates a crash cutscene by shaking and zooming the camera, then displays the game over screen.
+   *
+   * Plays a crash sound if appropriate for the crash type. After the animation, resets the camera and optionally triggers a screen fade before showing the game over overlay.
+   *
+   * @param {THREE.PerspectiveCamera} camera - The camera to animate during the crash cutscene.
+   * @param {string} [crashType='terrain'] - The type of crash, used to determine sound and effects.
    */
 
   function triggerCrashCutscene(camera, crashType = 'terrain') {
@@ -192,7 +193,9 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
     }, 50);
   }
   /**
-   * Detects whether the aircraft is in water and applies buoyancy/limits depth.
+   * Determines if the aircraft is in or near water, updates its water state, and applies buoyancy and depth limits.
+   *
+   * Uses raycasting to detect the ocean surface below the aircraft. If the aircraft is submerged, sets its `inWater` and `waterDepth` properties, limits maximum underwater depth, and prevents further descent by adjusting position and upward velocity.
    */
 
   function checkWaterInteraction() {
@@ -233,8 +236,9 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
     }
   }
   /**
-   * Handles collision logic for terrain and water.
-   * Updates crash state, emits particles, and plays cutscene if necessary.
+   * Detects and handles collisions between the aircraft and terrain or water, updating crash state and triggering visual effects as needed.
+   *
+   * If the aircraft collides with terrain, it always results in a crash with debris particles and a crash cutscene. Water collisions cause a crash only if the impact speed or vertical speed exceed safe thresholds; otherwise, a splash effect is emitted when entering water at moderate speed. Updates the aircraft's previous water state for splash detection.
    */
 
   function handleCollisions() {
@@ -285,8 +289,8 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
     aircraft.previouslyInWater = aircraft.inWater;
   }
   /**
-   * Emits splash particles at the given position to simulate water entry.
-   * @param {THREE.Vector3} position - World coordinates of splash.
+   * Emits a burst of splash particles at the specified position to visually simulate water entry.
+   * @param {THREE.Vector3} position - The world coordinates where the splash effect should appear.
    */
 
   function emitSplashParticles(position) {
@@ -411,8 +415,8 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   };
   
   /**
-   * Updates aircraft rotation based on control input and velocity.
-   * Applies banking and gradual velocity alignment.
+   * Updates the aircraft's orientation based on current rotation speeds and velocity, applying pitch, yaw, and roll with banking effects.
+   * Gradually aligns the velocity direction with the aircraft's forward vector to simulate coordinated turning.
    * @param {number} dt - Time step in seconds.
    */
   
