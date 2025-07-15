@@ -375,22 +375,32 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
    * Handles multi-point collisions and triggers crash streams.
    */
   function handleCollisions() {
-    const down = new THREE.Vector3(0, -1, 0);
     const world = aircraft.matrixWorld;
+    // Multi-directional raycasts for robust collision detection
+    const rayDirections = [
+      new THREE.Vector3(0, -1, 0),  // down
+      new THREE.Vector3(0, 0, -1),  // forward
+      new THREE.Vector3(1, 0, 0),   // right
+      new THREE.Vector3(-1, 0, 0),  // left
+      new THREE.Vector3(0, 0, 1),   // backward
+    ];
     for (const pt of aircraft.impactPoints) {
       if (aircraft.crashed) break;
       const origin = pt.clone().applyMatrix4(world);
-      const ray = new THREE.Raycaster(origin, down, 0, 200);
-      const tHits = ray.intersectObject(terrain, true);
-      const wHits = ray.intersectObject(ocean,   true);
-      // CRASH ONLY IF CLOSE TO TERRAIN
-      if (tHits.length && origin.y - tHits[0].point.y < 2) {
-        aircraft.crashed = true;
-        aircraft.velocity.set(0, 0, 0);
-        emitCrashStream(tHits[0].point);
-        if (camera) triggerCrashCutscene(camera, 'terrain');
-        return;
+      for (const direction of rayDirections) {
+        const ray = new THREE.Raycaster(origin, direction, 0, 5);
+        const tHits = ray.intersectObject(terrain, true);
+        if (tHits.length && tHits[0].distance < 2) {
+          aircraft.crashed = true;
+          aircraft.velocity.set(0, 0, 0);
+          emitCrashStream(tHits[0].point);
+          if (camera) triggerCrashCutscene(camera, 'terrain');
+          return;
+        }
       }
+      // Water collision check (original logic)
+      const waterRay = new THREE.Raycaster(origin, new THREE.Vector3(0, -1, 0), 0, 200);
+      const wHits = waterRay.intersectObject(ocean, true);
       if (wHits.length) {
         const wy = wHits[0].point.y;
         const speed = aircraft.velocity.length();
@@ -406,7 +416,6 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
         }
       }
     }
-    // Update water state
     aircraft.previouslyInWater = aircraft.inWater;
   }
 
@@ -513,7 +522,7 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
       MIN_TURN_SPEED / Math.max(speed, MIN_TURN_SPEED)
     );
     const sy = aircraft.rotationSpeed.yaw   * speedFactor;
-    const sp = aircraft.rotationSpeed.pitch * speedFactor;
+    const sp = aircraft.rotationSpeed.pitch * speedFactor * 4.5; // Increased multiplier for drastic pitch
     const sr = aircraft.rotationSpeed.roll;
 
     const right   = new THREE.Vector3(1,0,0).applyQuaternion(aircraft.quaternion);
@@ -533,10 +542,11 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
       .multiply(qRoll)
       .normalize();
 
+    // More responsive velocity alignment with aircraft orientation
     if (speed > 1) {
       const cf = new THREE.Vector3(0,0,-1).applyQuaternion(aircraft.quaternion);
       const vd = aircraft.velocity.clone().normalize();
-      vd.lerp(cf, TURN_COORDINATION * dt);
+      vd.lerp(cf, Math.min(TURN_COORDINATION * 3 * dt, 0.8));
       aircraft.velocity.copy(vd.multiplyScalar(speed));
     }
   }
