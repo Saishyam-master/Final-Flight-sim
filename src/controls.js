@@ -28,19 +28,19 @@ export function setupControls(aircraft) {
     const allowPitch = forwardSpeed >= 60 || aircraft.airborne;
     const allowYaw = forwardSpeed <= 50 || !aircraft.airborne;
 
-    // PITCH
+    // PITCH (W/S keys)
     if (allowPitch) {
       if (keys.KeyW) aircraft.rotationSpeed.pitch = pitchSpeed;
       if (keys.KeyS) aircraft.rotationSpeed.pitch = -pitchSpeed;
     }
 
-    // YAW (ground/low speed only)
+    // YAW (A/D keys, ground/low speed only)
     if (allowYaw) {
       if (keys.KeyA) aircraft.rotationSpeed.yaw = yawSpeed;
       if (keys.KeyD) aircraft.rotationSpeed.yaw = -yawSpeed;
     }
 
-    // ROLL
+    // ROLL (ArrowLeft/ArrowRight)
     if (keys.ArrowLeft) aircraft.rotationSpeed.roll = -rollSpeed;
     if (keys.ArrowRight) aircraft.rotationSpeed.roll = rollSpeed;
   }
@@ -50,7 +50,11 @@ export function setupControls(aircraft) {
       keys[event.code] = true;
       updateControlInputs();
     }
-
+    // ArrowUp increases throttle instantly
+    if (event.code === 'ArrowUp') {
+      aircraft.throttle = Math.min(1, aircraft.throttle + throttleStep);
+    }
+    // ArrowDown decreases throttle instantly
     if (event.code === 'ArrowDown') {
       aircraft.throttle = Math.max(0, aircraft.throttle - throttleStep);
     }
@@ -63,12 +67,10 @@ export function setupControls(aircraft) {
     }
   });
 
-  // 🧠 Decay throttle when up arrow not held
+  // Decay throttle when ArrowUp not held
   setInterval(() => {
     if (!keys.ArrowUp) {
       aircraft.throttle = Math.max(0, aircraft.throttle - throttleDecayRate);
-    } else {
-      aircraft.throttle = Math.min(1, aircraft.throttle + throttleStep);
     }
   }, 100); // Every 100ms
 }
