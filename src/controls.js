@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 
+/**
+ * Sets up keyboard controls for the aircraft.
+ * @param {THREE.Object3D} aircraft
+ */
 export function setupControls(aircraft) {
   const pitchSpeed = Math.PI * 0.3;
   const yawSpeed = Math.PI * 0.4;
@@ -18,6 +22,8 @@ export function setupControls(aircraft) {
   };
 
   function updateControlInputs() {
+    if (aircraft.controlsLocked) return; // NEW: lockout
+
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(aircraft.quaternion);
     const forwardSpeed = aircraft.velocity.dot(forward);
 
@@ -46,6 +52,8 @@ export function setupControls(aircraft) {
   }
 
   window.addEventListener('keydown', (event) => {
+    if (aircraft.controlsLocked) return; // NEW: lockout
+
     if (event.code in keys) {
       keys[event.code] = true;
       updateControlInputs();
@@ -61,6 +69,8 @@ export function setupControls(aircraft) {
   });
 
   window.addEventListener('keyup', (event) => {
+    if (aircraft.controlsLocked) return; // NEW: lockout
+
     if (event.code in keys) {
       keys[event.code] = false;
       updateControlInputs();
