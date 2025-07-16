@@ -64,11 +64,11 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
   // Aerodynamic and environment constants
   const GROUND_LEVEL   = 20;
   const TAKEOFF_SPEED  = 30;
-  const MAX_THRUST     = 8000;
+  const MAX_THRUST     = 16000; // Increased for more speed
   const DRAG_COEFF     = 0.01;
   const LIFT_COEFF     = 0.03;
   const GRAVITY        = 9.81;
-  const MAX_SPEED      = 600;
+  const MAX_SPEED      = 1200;  // Increased for more fun and realism
   const MASS           = 1200;
   const WING_AREA      = 16;
   const AIR_DENSITY    = 1.225;
@@ -550,4 +550,177 @@ export function setupPhysics(aircraft, onTakeoff, terrain, ocean, camera) {
       aircraft.velocity.copy(vd.multiplyScalar(speed));
     }
   }
+}
+
+/**
+ * NEW: Emits a realistic fire + smoke effect at the given world position.
+ * @param {THREE.Vector3} position - World impact location.
+ */
+export function emitCrashStream(position) {
+  const group = new THREE.Group();
+  const fireCount = 120;
+  const smokeCount = 180;
+  let smokeSprites = [];
+
+  // Use the exact impact point as the center for all particles
+  const center = position.clone();
+  // Use a fixed bounding box around the impact point for coverage
+  const bbox = new THREE.Box3(
+    center.clone().addScalar(-6),
+    center.clone().addScalar(6)
+  );
+
+  // Helper to create a single particle
+  function createParticle(tex, size, color, opacity, pos, vel, fade, expand, animate) {
+    const mat = new THREE.SpriteMaterial({
+      map: tex,
+      color: color,
+      opacity: opacity,
+      transparent: true,
+      depthWrite: false,
+      blending: tex === FIRE_TEX ? THREE.AdditiveBlending : THREE.NormalBlending
+    });
+    const sprite = new THREE.Sprite(mat);
+    sprite.position.copy(pos);
+    sprite.scale.set(size, size, size);
+    sprite.userData = { vel, fade, expand, animate, baseSize: size, opacity };
+    group.add(sprite);
+    return sprite;
+  }
+
+  // Fire core (bright, small, fast, climbs up)
+  for (let i = 0; i < fireCount; i++) {
+    // Distribute within bounding box centered at impact
+    const pos = new THREE.Vector3(
+      THREE.MathUtils.lerp(bbox.min.x, bbox.max.x, Math.random()),
+      THREE.MathUtils.lerp(bbox.min.y, bbox.max.y, Math.random()),
+      THREE.MathUtils.lerp(bbox.min.z, bbox.max.z, Math.random())
+    );
+    const vel = new THREE.Vector3(
+      (Math.random() - 0.5) * 2,
+      Math.random() * 8 + 8,
+      (Math.random() - 0.5) * 2
+    );
+    const color = new THREE.Color().setHSL(0.08 + Math.random() * 0.06, 1, 0.5 + Math.random() * 0.2);
+    createParticle(
+      FIRE_TEX, 8 + Math.random() * 6, color, 1,
+      pos, vel, 2.2 + Math.random() * 0.7, 1.5 + Math.random(), true
+    );
+  }
+
+  // Fire glow (larger, orange, slower, climbs up)
+  for (let i = 0; i < fireCount / 2; i++) {
+    const pos = new THREE.Vector3(
+      THREE.MathUtils.lerp(bbox.min.x, bbox.max.x, Math.random()),
+      THREE.MathUtils.lerp(bbox.min.y, bbox.max.y, Math.random()),
+      THREE.MathUtils.lerp(bbox.min.z, bbox.max.z, Math.random())
+    );
+    const vel = new THREE.Vector3(
+      (Math.random() - 0.5) * 1.5,
+      Math.random() * 5 + 4,
+      (Math.random() - 0.5) * 1.5
+    );
+    const color = new THREE.Color().setHSL(0.07, 1, 0.35 + Math.random() * 0.1);
+    createParticle(
+      FIRE_TEX, 16 + Math.random() * 8, color, 0.8,
+      pos, vel, 2.8 + Math.random(), 2.5 + Math.random(), true
+    );
+  }
+
+  terrain.parent.add(group);
+
+  // Animate all particles
+  let time = 0;
+  function animateFire() {
+    time += 0.016;
+    for (let i = group.children.length - 1; i >= 0; i--) {
+      const sprite = group.children[i];
+      const ud = sprite.userData;
+      sprite.position.addScaledVector(ud.vel, 0.016);
+      ud.vel.y += 0.12 * 0.016;
+      ud.vel.x += (Math.random() - 0.5) * 0.02;
+      ud.vel.z += (Math.random() - 0.5) * 0.02;
+      sprite.scale.setScalar(ud.baseSize + ud.expand * time);
+      // Fade less aggressively
+      sprite.material.opacity = Math.max(0, ud.opacity * (1 - time / (ud.fade + 1.5)));
+      // Animate fire flicker
+      if (ud.animate && Math.random() < 0.2) {
+        sprite.material.color.offsetHSL(0, 0, (Math.random() - 0.5) * 0.1);
+      }
+      // Remove if faded
+      if (time > ud.fade + 1.5) {
+        group.remove(sprite);
+      }
+    }
+    if (group.children.length > 0) {
+      requestAnimationFrame(animateFire);
+    }
+  }
+  animateFire();
+
+  // After a short delay, add smoke
+  setTimeout(() => {
+    // Thick smoke (dark, slow, large, rises and drifts)
+    for (let i = 0; i < smokeCount; i++) {
+      const pos = new THREE.Vector3(
+        THREE.MathUtils.lerp(bbox.min.x, bbox.max.x, Math.random()),
+        THREE.MathUtils.lerp(bbox.min.y, bbox.max.y, Math.random()),
+        THREE.MathUtils.lerp(bbox.min.z, bbox.max.z, Math.random())
+      );
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 1.2,
+        Math.random() * 4 + 2,
+        (Math.random() - 0.5) * 1.2
+      );
+      const color = new THREE.Color().setHSL(0, 0, 0.08 + Math.random() * 0.12);
+      smokeSprites.push(createParticle(
+        SMOKE_TEX, 18 + Math.random() * 12, color, 0.7 + Math.random() * 0.2,
+        pos, vel, 4.5 + Math.random() * 2, 3 + Math.random() * 2, false
+      ));
+    }
+    // Light smoke (gray, very large, slow, fades out, rises and drifts)
+    for (let i = 0; i < smokeCount / 2; i++) {
+      const pos = new THREE.Vector3(
+        THREE.MathUtils.lerp(bbox.min.x, bbox.max.x, Math.random()),
+        THREE.MathUtils.lerp(bbox.min.y, bbox.max.y, Math.random()),
+        THREE.MathUtils.lerp(bbox.min.z, bbox.max.z, Math.random())
+      );
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 0.8,
+        Math.random() * 2 + 1,
+        (Math.random() - 0.5) * 0.8
+      );
+      const color = new THREE.Color().setHSL(0, 0, 0.25 + Math.random() * 0.15);
+      smokeSprites.push(createParticle(
+        SMOKE_TEX, 32 + Math.random() * 16, color, 0.4 + Math.random() * 0.2,
+        pos, vel, 6 + Math.random() * 2, 4 + Math.random() * 2, false
+      ));
+    }
+    // Animate smoke
+    let smokeTime = 0;
+    function animateSmoke() {
+      smokeTime += 0.016;
+      for (let i = smokeSprites.length - 1; i >= 0; i--) {
+        const sprite = smokeSprites[i];
+        const ud = sprite.userData;
+        sprite.position.addScaledVector(ud.vel, 0.016);
+        ud.vel.y += 0.12 * 0.016;
+        ud.vel.x += (Math.random() - 0.5) * 0.02;
+        ud.vel.z += (Math.random() - 0.5) * 0.02;
+        sprite.scale.setScalar(ud.baseSize + ud.expand * smokeTime);
+        // Fade less aggressively
+        sprite.material.opacity = Math.max(0, ud.opacity * (1 - smokeTime / (ud.fade + 2)));
+        if (smokeTime > ud.fade + 2) {
+          group.remove(sprite);
+          smokeSprites.splice(i, 1);
+        }
+      }
+      if (smokeSprites.length > 0) {
+        requestAnimationFrame(animateSmoke);
+      } else {
+        terrain.parent.remove(group);
+      }
+    }
+    animateSmoke();
+  }, 400); // 400ms delay before smoke appears
 }
