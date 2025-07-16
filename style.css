@@ -1,0 +1,13 @@
+/* style.css: Custom styles for minimap and overlays */
+#minimap-canvas {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 180px;
+  height: 180px;
+  background: #222;
+  border: 2px solid #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  z-index: 1001;
+}
